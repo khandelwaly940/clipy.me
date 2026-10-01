@@ -57,6 +57,14 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
         searching = false
     }
 
+    func endMenuTracking() {
+        (searchField.cell as? ClipyMeMenuSearchCell)?.endMenuTracking()
+        if let window = searchField.window, let editor = searchField.currentEditor(), window.firstResponder === editor {
+            window.makeFirstResponder(nil)
+        }
+        stop()
+    }
+
     func reset() {
         stop()
         searchField.stringValue = ""
@@ -237,8 +245,95 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
 // there, but suppresses its caret. Supply a native field editor whose insertion
 // point follows focus, without activating the app or stealing the paste target.
 final class ClipyMeMenuFieldEditor: NSTextView {
-    override var shouldDrawInsertionPoint: Bool {
-        isEditable && selectedRange().length == 0 && window?.firstResponder === self
+    private let insertionPoint = ClipyMeMenuInsertionPoint()
+    private var blinkTimer: Timer?
+    private var blinkOn = true
+    private var caretEnabled = false
+    private var refreshQueued = false
+
+    var isMenuInsertionPointActive: Bool {
+        caretEnabled && isEditable && selectedRange().length == 0 && window?.firstResponder === self
+    }
+
+    // AppKit suppresses its shared insertion-point timer in non-key menu
+    // windows. Draw just the caret locally; all editing stays in NSTextView.
+    override var shouldDrawInsertionPoint: Bool { false }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            caretEnabled = true
+            if insertionPoint.superview == nil { addSubview(insertionPoint) }
+            blinkTimer?.invalidate()
+            let timer = Timer(timeInterval: 0.55, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.blinkOn.toggle()
+                self.refreshInsertionPoint()
+            }
+            blinkTimer = timer
+            RunLoop.main.add(timer, forMode: .default)
+            RunLoop.main.add(timer, forMode: .eventTracking)
+            queueInsertionPointRefresh()
+        }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { stopInsertionPoint() }
+        return accepted
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { stopInsertionPoint() }
+    }
+
+    override func updateInsertionPointStateAndRestartTimer(_ restartFlag: Bool) {
+        super.updateInsertionPointStateAndRestartTimer(restartFlag)
+        queueInsertionPointRefresh()
+    }
+
+    private func queueInsertionPointRefresh() {
+        blinkOn = true
+        guard !refreshQueued else { return }
+        refreshQueued = true
+        RunLoop.main.perform(inModes: [.default, .eventTracking]) { [weak self] in
+            guard let self else { return }
+            self.refreshQueued = false
+            self.refreshInsertionPoint()
+        }
+    }
+
+    private func refreshInsertionPoint() {
+        guard isMenuInsertionPointActive, let window else {
+            insertionPoint.isHidden = true
+            return
+        }
+        let range = NSRange(location: min(selectedRange().location, string.utf16.count), length: 0)
+        let screenRect = firstRect(forCharacterRange: range, actualRange: nil)
+        var rect = convert(window.convertFromScreen(screenRect), from: nil)
+        rect.size.width = 1.5
+        insertionPoint.frame = rect
+        insertionPoint.isHidden = !blinkOn || rect.height <= 0
+        insertionPoint.needsDisplay = true
+    }
+
+    fileprivate func stopInsertionPoint() {
+        caretEnabled = false
+        blinkTimer?.invalidate()
+        blinkTimer = nil
+        insertionPoint.isHidden = true
+    }
+
+    deinit { blinkTimer?.invalidate() }
+}
+
+final class ClipyMeMenuInsertionPoint: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.labelColor.setFill()
+        bounds.fill()
     }
 }
 
@@ -252,4 +347,6 @@ final class ClipyMeMenuSearchCell: NSSearchFieldCell {
     }()
 
     override func fieldEditor(for controlView: NSView) -> NSTextView? { editor }
+
+    func endMenuTracking() { (editor as? ClipyMeMenuFieldEditor)?.stopInsertionPoint() }
 }

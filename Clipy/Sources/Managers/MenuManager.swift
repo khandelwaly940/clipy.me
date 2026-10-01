@@ -65,7 +65,7 @@ final class MenuManager: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         trackingMenu = nil
-        (menu.items.first?.view as? ClipyMeMenuSearchView)?.stop()
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.endMenuTracking()
         if rebuildAfterTracking {
             rebuildAfterTracking = false
             createClipMenu()

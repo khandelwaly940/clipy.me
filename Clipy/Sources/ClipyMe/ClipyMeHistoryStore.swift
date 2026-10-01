@@ -55,13 +55,9 @@ final class ClipyMeHistoryStore {
     static let sortKey = "ClipyMe.searchSort"
     static let changed = Notification.Name("ClipyMe.historyOptionsChanged")
     static var searchSort: Sort {
-        get {
-            let defaults = UserDefaults.standard
-            // Carry forward the previous choice for search only. Normal history
-            // never reads either of these keys.
-            return Sort(rawValue: defaults.string(forKey: sortKey)
-                ?? defaults.string(forKey: "ClipyMe.historySort") ?? "") ?? .bestMatch
-        }
+        // The former shared history sort must not become the search default.
+        // Only explicit choices made with the separate search control persist.
+        get { Sort(rawValue: UserDefaults.standard.string(forKey: sortKey) ?? "") ?? .bestMatch }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: sortKey)
             NotificationCenter.default.post(name: changed, object: nil)

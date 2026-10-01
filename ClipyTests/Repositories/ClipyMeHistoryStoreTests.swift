@@ -173,10 +173,16 @@ struct ClipyMeHistoryStoreTests {
         let new = try save("Alpha", at: 2)
         let defaults = UserDefaults.standard
         let previous = defaults.object(forKey: ClipyMeHistoryStore.sortKey)
+        let previousLegacy = defaults.object(forKey: "ClipyMe.historySort")
         defer {
             if let previous { defaults.set(previous, forKey: ClipyMeHistoryStore.sortKey) }
             else { defaults.removeObject(forKey: ClipyMeHistoryStore.sortKey) }
+            if let previousLegacy { defaults.set(previousLegacy, forKey: "ClipyMe.historySort") }
+            else { defaults.removeObject(forKey: "ClipyMe.historySort") }
         }
+        defaults.removeObject(forKey: ClipyMeHistoryStore.sortKey)
+        defaults.set("newest", forKey: "ClipyMe.historySort")
+        #expect(ClipyMeHistoryStore.searchSort == .bestMatch)
         for sort in ClipyMeHistoryStore.Sort.allCases {
             ClipyMeHistoryStore.searchSort = sort
             #expect(repository.fetchHistoryDetails(ascending: false, includesThumbnailAsset: false, limit: 30)
@@ -186,7 +192,7 @@ struct ClipyMeHistoryStoreTests {
         }
     }
 
-    @Test func menuFieldEditorShowsInsertionPointInNonKeyWindow() throws {
+    @Test func menuFieldEditorShowsInsertionPointInNonKeyWindow() async throws {
         let field = ClipyMeMenuSearchView().searchField
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 40),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -195,14 +201,30 @@ struct ClipyMeHistoryStoreTests {
         let editor = try #require(field.currentEditor() as? ClipyMeMenuFieldEditor)
         #expect(!window.isKeyWindow)
         #expect(editor.isFieldEditor)
-        #expect(editor.shouldDrawInsertionPoint)
+        try await Task.sleep(for: .milliseconds(100))
+        let caret = try #require(editor.subviews.first { $0 is ClipyMeMenuInsertionPoint })
+        #expect(!caret.isHidden)
+        #expect(caret.frame.width > 0 && caret.frame.height > 0)
+        #expect(editor.isMenuInsertionPointActive)
         editor.string = "Search query"
         editor.setSelectedRange(NSRange(location: 0, length: 6))
-        #expect(!editor.shouldDrawInsertionPoint)
+        #expect(!editor.isMenuInsertionPointActive)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(caret.isHidden)
         editor.setSelectedRange(NSRange(location: 6, length: 0))
-        #expect(editor.shouldDrawInsertionPoint)
+        #expect(editor.isMenuInsertionPointActive)
+        (field.cell as? ClipyMeMenuSearchCell)?.endMenuTracking()
+        try await Task.sleep(for: .milliseconds(650))
+        #expect(caret.isHidden)
+        #expect(!editor.isMenuInsertionPointActive)
         window.makeFirstResponder(nil)
-        #expect(!editor.shouldDrawInsertionPoint)
+        field.stringValue = ""
+        #expect(window.makeFirstResponder(field))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(editor.isMenuInsertionPointActive)
+        #expect(!caret.isHidden)
+        window.makeFirstResponder(nil)
+        #expect(!editor.isMenuInsertionPointActive)
     }
 
     @Test func updatesRespectDisableIntervalAndVersionOrdering() {
