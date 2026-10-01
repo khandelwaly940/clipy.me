@@ -106,8 +106,10 @@ final class ClipyMeHistoryStore {
                 arguments += ["%" + word + "%"]
             } else {
                 // Unicode, short terms and literal SQL wildcards use Unicode-aware matching
-                // over text assets only, never image/PDF blobs.
-                conditions.append("h.id IN (SELECT id FROM clipyMeTextContent WHERE clipymeContains(text, ?))")
+                // over text assets only, never image/PDF blobs. Correlating by history ID
+                // lets LIMIT stop after the first matching rows in the selected order
+                // instead of materializing matches for the entire clipboard first.
+                conditions.append("EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id AND clipymeContains(s.text, ?))")
                 arguments += [word]
             }
         }
