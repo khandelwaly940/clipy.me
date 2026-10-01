@@ -21,6 +21,49 @@ struct ClipyMeHistoryStoreTests {
         return id
     }
 
+    @Test func limitedSearchMatchesCompleteSearchAndFindsOlderClips() throws {
+        for index in 0..<280 {
+            try save("common clip \(index)" + (index < 4 ? " rareolder" : ""), at: index)
+        }
+        for sort in ClipyMeHistoryStore.Sort.allCases {
+            let complete = try store.search(query: "common", filter: .all, sort: sort, limit: 300)
+            let menu = try store.search(query: "common", filter: .all, sort: sort, limit: 31)
+            #expect(menu.map(\.id) == Array(complete.prefix(31)).map(\.id))
+        }
+        let older = try store.search(query: "rareolder", filter: .all, sort: .newest, limit: 31)
+        #expect(older.count == 4)
+        let paged = try store.search(query: "common", filter: .all, sort: .newest, limit: 31, offset: 31)
+        let complete = try store.search(query: "common", filter: .all, sort: .newest, limit: 300)
+        #expect(paged.map(\.id) == Array(complete.dropFirst(31).prefix(31)).map(\.id))
+    }
+
+    @Test func bestMatchRanksExactPrefixAndPhraseWithoutFalsePositives() throws {
+        #expect(ClipyMeHistoryStore.rank(title: "CAFÉ", query: "café") == 0)
+        let exact = try save("alpha beta", at: 1)
+        let prefix = try save("alpha beta extras", at: 2)
+        let phrase = try save("extras alpha beta", at: 3)
+        let separate = try save("alpha extras beta", at: 4)
+        _ = try save("alpha missing", at: 5)
+        #expect(try store.search(query: "alpha beta", filter: .all, sort: .bestMatch).map(\.id) == [exact, prefix, phrase, separate])
+        _ = try save("abc --- bcd", at: 6)
+        #expect(try store.search(query: "abcd", filter: .all, sort: .bestMatch).isEmpty)
+        #expect(try store.search(query: "alpha absent", filter: .all, sort: .bestMatch).isEmpty)
+    }
+
+    @Test func streamingSearchAndPreviewCrossUTF8ChunkBoundary() throws {
+        let id = try save(String(repeating: "x", count: 65_533) + "CAFÉ boundaryneedle suffix")
+        #expect(try store.search(query: "café boundaryneedle", filter: .all, sort: .bestMatch).map(\.id) == [id])
+        let preview = try #require(try store.preview(id: id, query: "boundaryneedle", limit: 120))
+        #expect(preview.contains("boundaryneedle"))
+        #expect(preview.count <= 122)
+        #expect(preview.hasPrefix("…"))
+        let entry = try #require(store.search(query: "boundaryneedle", filter: .all, sort: .bestMatch).first)
+        let item = ClipyMeMenuSearchView.resultItem(entry: entry, titleLimit: 40, previewLimit: 80)
+        #expect(item.toolTip?.count == 80)
+        #expect(item.representedObject as? PasteboardHistory.ID == id)
+        #expect(ClipyMeMenuSearchView.resultItem(entry: entry, titleLimit: 40, previewLimit: nil).toolTip == nil)
+    }
+
     @Test func historyWindowUsesCompactNativeControls() throws {
         let controller = withDependencies {
             $0.pasteboardHistoryRepository = repository

@@ -176,7 +176,7 @@ extension AppDelegate: NSApplicationDelegate {
             let store = ClipyMeHistoryStore()
             for query in ["a", "it", "http", "clip", "unlikely-query-398791"] {
                 let start = CFAbsoluteTimeGetCurrent()
-                let count = (try? store.search(query: query, filter: .all, sort: .newest, limit: 31).count) ?? -1
+                let count = (try? store.search(query: query, filter: .all, sort: .bestMatch, limit: 31).count) ?? -1
                 print("Search length=\(query.count), rows=\(count), ms=\((CFAbsoluteTimeGetCurrent() - start) * 1000)")
             }
             NSApp.terminate(nil)

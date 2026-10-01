@@ -8,6 +8,9 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
     var onQuery: ((String) -> Void)?
     private let store = ClipyMeHistoryStore()
     private let queue = DispatchQueue(label: "ClipyMe.menuSearch", qos: .userInitiated)
+    private let previewQueue = DispatchQueue(label: "ClipyMe.menuPreview", qos: .utility)
+    private var previewWork: DispatchWorkItem?
+    private var previewed = Set<PasteboardHistory.ID>()
     private var results = [NSMenuItem]()
     private var originalItems = [NSMenuItem]()
     private var pending: DispatchWorkItem?
@@ -33,6 +36,9 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
     }
 
     func stop() {
+        previewWork?.cancel()
+        previewWork = nil
+        previewed.removeAll()
         pending?.cancel()
         pending = nil
         for (item, enabled) in disabledItems { item.isEnabled = enabled }
@@ -127,14 +133,11 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
                     case .success(let entries):
                         var items = [NSMenuItem]()
                         for entry in entries.prefix(30) {
-                            let limit = max(10, AppEnvironment.current.defaults.integer(forKey: Constants.UserDefaults.maxMenuItemTitleLength))
-                            let preview = entry.label.prefix(limit).components(separatedBy: .whitespacesAndNewlines)
-                                .filter { !$0.isEmpty }.joined(separator: " ")
-                            let title = preview + (entry.label.count > limit ? "…" : "")
-                            let item = NSMenuItem(title: (entry.favorite ? "★ " : "") + title,
-                                                  action: #selector(AppDelegate.selectClipMenuItem(_:)), keyEquivalent: "")
-                            item.target = NSApp.delegate
-                            item.representedObject = entry.id
+                            let defaults = AppEnvironment.current.defaults
+                            let item = Self.resultItem(entry: entry,
+                                titleLimit: defaults.integer(forKey: Constants.UserDefaults.maxMenuItemTitleLength),
+                                previewLimit: defaults.bool(forKey: Constants.UserDefaults.showToolTipOnMenuItem)
+                                    ? defaults.integer(forKey: Constants.UserDefaults.maxLengthOfToolTip) : nil)
                             items.append(item)
                         }
                         if entries.isEmpty {
@@ -153,6 +156,40 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
         }
         pending = work
         queue.async(execute: work)
+    }
+
+    static func resultItem(entry: ClipyMeHistoryStore.Entry, titleLimit: Int, previewLimit: Int?) -> NSMenuItem {
+        let limit = max(10, titleLimit)
+        let label = entry.label.prefix(limit).components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        let item = NSMenuItem(title: (entry.favorite ? "★ " : "") + label + (entry.label.count > limit ? "…" : ""),
+                              action: #selector(AppDelegate.selectClipMenuItem(_:)), keyEquivalent: "")
+        item.target = NSApp.delegate
+        item.representedObject = entry.id
+        if let previewLimit {
+            item.toolTip = String(entry.title.prefix(max(1, min(previewLimit, 10_000))))
+        }
+        return item
+    }
+
+    func willHighlight(_ item: NSMenuItem?) {
+        previewWork?.cancel()
+        guard let item, item.toolTip != nil, results.contains(where: { $0 === item }),
+              let id = item.representedObject as? PasteboardHistory.ID, !previewed.contains(id) else { return }
+        let request = generation
+        let query = searchField.stringValue
+        let limit = AppEnvironment.current.defaults.integer(forKey: Constants.UserDefaults.maxLengthOfToolTip)
+        let store = self.store
+        let work = DispatchWorkItem { [weak self, weak item] in
+            let preview = try? store.preview(id: id, query: query, limit: limit)
+            RunLoop.main.perform(inModes: [.eventTracking, .default]) { [weak self, weak item] in
+                guard let self, self.generation == request, let item else { return }
+                self.previewed.insert(id)
+                if let preview { item.toolTip = preview }
+            }
+        }
+        previewWork = work
+        previewQueue.async(execute: work)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

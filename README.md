@@ -24,11 +24,12 @@ On first installation, enable **ClipyMe** in **System Settings → Privacy & Sec
 
 - Open the normal Clipy menu using your existing shortcut (for example Control–Space), then type. Results appear in that menu immediately after the database query finishes. There is no debounce delay or flashing “Searching…” row.
 - Clear the query to restore the original history folders and menu layout. Click a clip or press Return on a result to use the original paste action.
-- **Sort History** chooses original order, newest, oldest, alphabetical, or content type. Search uses the same order.
+- **Sort History** offers Best Match, original order, newest, oldest, alphabetical, or content type. Best Match ranks exact titles, prefixes, phrases, then matches across the title ahead of matches only in the body. Every query word must occur in the clip; unrelated fuzzy matches are excluded. Existing explicitly selected sort preferences are preserved.
+- Hover over a search result for the normal tooltip preview, respecting your existing preview setting and length. A match-context preview loads on demand, including matches beyond the menu title.
 - **Command–F** opens the advanced history panel, with filters, favorites, copy/paste, and plain-text editing. The redundant Search/Edit menu row is hidden.
 - Text replacement is transactional. Rich content can be edited as a new plain-text clip, preserving the original. Favorites survive automatic history pruning; an explicit Clear History still clears them.
 
-Search uses SQLite's existing database pool and a small full-text index. It does not decode images, poll the history, or maintain a duplicate in-memory clipboard cache. Queries run off the UI thread; superseded queued requests are cancelled and stale results discarded. The menu displays up to 30 matches; Command–F supports more results. Actual latency depends on history size, query, hardware, and sort order.
+Search uses SQLite's existing database pool and a small full-text index. It does not decode images, poll the history, or maintain a duplicate in-memory clipboard cache. Text verification uses small, overlapping reads so a large clip is not loaded in full for a simple match. Queries run off the UI thread; superseded queued requests are cancelled and stale results discarded. The menu displays up to 30 matches; Command–F supports more results. Actual latency depends on history size, query, hardware, and sort order.
 
 ## Updates
 
@@ -46,6 +47,8 @@ xcodebuild -project Clipy.xcodeproj -scheme Clipy -derivedDataPath build/Derived
   CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO test
 bash scripts/package_release.sh
 ```
+
+For Release-mode tests, also pass `-configuration Release CLIPYME_TESTABILITY=YES CLIPYME_BUNDLE_IDENTIFIER=local.clipyme.tests` so test preferences stay separate from the installed app.
 
 The packaging script builds both architectures and the standalone migration helpers, verifies signatures, runs migration verification tests, and produces `build/release/ClipyMe-macos-universal.zip` and its checksum. Developer tools are required only for building. Release packaging does not include signing keys, clipboard data, settings, or Firebase configuration.
 

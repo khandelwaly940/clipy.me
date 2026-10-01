@@ -8,10 +8,11 @@ final class ClipyMeHistoryStore {
     @Dependency(\.defaultDatabase) private var database
 
     enum Sort: String, CaseIterable {
-        case original, newest, oldest, alphabetical, type
+        case bestMatch, original, newest, oldest, alphabetical, type
 
         var title: String {
             switch self {
+            case .bestMatch: return "Best match (search)"
             case .original: return "Original order"
             case .newest: return "Newest first"
             case .oldest: return "Oldest first"
@@ -21,6 +22,7 @@ final class ClipyMeHistoryStore {
         }
         var orderSQL: String {
             switch self {
+            case .bestMatch: return Sort.original.orderSQL
             case .original:
                 return UserDefaults.standard.bool(forKey: Constants.UserDefaults.reorderClipsAfterPasting)
                     ? "h.updateAt DESC, h.id" : "h.updateAt ASC, h.id"
@@ -53,7 +55,7 @@ final class ClipyMeHistoryStore {
     static let sortKey = "ClipyMe.historySort"
     static let changed = Notification.Name("ClipyMe.historyOptionsChanged")
     static var selectedSort: Sort {
-        get { Sort(rawValue: UserDefaults.standard.string(forKey: sortKey) ?? "") ?? .original }
+        get { Sort(rawValue: UserDefaults.standard.string(forKey: sortKey) ?? "") ?? .bestMatch }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: sortKey)
             NotificationCenter.default.post(name: changed, object: nil)
@@ -99,17 +101,22 @@ final class ClipyMeHistoryStore {
         var conditions = [String]()
         var arguments = StatementArguments()
         for word in words {
-            if word.count >= 3 && word.utf8.allSatisfy({ $0 < 128 }) && !word.contains("%") && !word.contains("_") {
-                // Trigram LIKE uses a compact positional-data-free index. Parameters keep
-                // quotes literal; wildcard characters use the literal fallback below.
-                conditions.append("h.id IN (SELECT id FROM clipyMeFullText WHERE text LIKE ?)")
-                arguments += ["%" + word + "%"]
+            if word.count >= 3 && word.utf8.allSatisfy({ $0 < 128 }) {
+                // detail=none keeps the index compact. Intersect single trigrams,
+                // then verify the literal substring in chunks: grams alone are
+                // candidates, never proof of a valid match.
+                let letters = Array(word.lowercased())
+                let grams = Set((0..<(letters.count - 2)).prefix(32).map {
+                    "\"" + String(letters[$0...($0 + 2)]).replacingOccurrences(of: "\"", with: "\"\"") + "\""
+                }).sorted().joined(separator: " AND ")
+                conditions.append("""
+                    EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id
+                      AND s.rowid IN (SELECT rowid FROM clipyMeFullText WHERE clipyMeFullText MATCH ?)
+                      AND clipymeAssetContains(s.rowid, ?))
+                    """)
+                arguments += [grams, word]
             } else {
-                // Unicode, short terms and literal SQL wildcards use Unicode-aware matching
-                // over text assets only, never image/PDF blobs. Correlating by history ID
-                // lets LIMIT stop after the first matching rows in the selected order
-                // instead of materializing matches for the entire clipboard first.
-                conditions.append("EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id AND clipymeContains(s.text, ?))")
+                conditions.append("EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id AND clipymeAssetContains(s.rowid, ?))")
                 arguments += [word]
             }
         }
@@ -123,19 +130,52 @@ final class ClipyMeHistoryStore {
             conditions.append("(h.pasteboardTypes LIKE '%public.png%' OR h.pasteboardTypes LIKE '%public.tiff%' OR h.pasteboardTypes LIKE '%NSTIFFPboardType%')")
         }
         let predicate = conditions.isEmpty ? "1" : conditions.joined(separator: " AND ")
+        var order = sort.orderSQL
+        if sort == .bestMatch, !words.isEmpty {
+            let phrase = words.joined(separator: " ")
+            order = "clipymeRank(h.title, ?), length(h.title), h.updateAt DESC, h.id"
+            arguments += [phrase]
+        }
         arguments += [max(1, min(limit, 1000)), max(0, offset)]
         return try database.read { connection in
             try Row.fetchAll(connection, sql: """
                 SELECT h.*, f.historyID IS NOT NULL AS favorite FROM pasteboardHistories h
                 LEFT JOIN clipyMeFavorites f ON f.historyID=h.id
-                WHERE \(predicate) ORDER BY \(sort.orderSQL) LIMIT ? OFFSET ?
-                """, arguments: arguments).map { row in
-                    let types: String = row["pasteboardTypes"]
-                    return Entry(id: .init(rawValue: row["id"]), title: row["title"],
-                                 types: (try? JSONDecoder().decode([String].self, from: Data(types.utf8))) ?? [],
-                                 updatedAt: row["updateAt"], favorite: row["favorite"])
-            }
+                WHERE \(predicate) ORDER BY \(order) LIMIT ? OFFSET ?
+                """, arguments: arguments).map(Self.entry)
         }
+    }
+
+    static func rank(title: String, query: String) -> Int {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.compare(query, options: .caseInsensitive) == .orderedSame { return 0 }
+        if let range = title.range(of: query, options: .caseInsensitive) {
+            return range.lowerBound == title.startIndex ? 1 : 2
+        }
+        return query.split(whereSeparator: \.isWhitespace).allSatisfy {
+            title.range(of: String($0), options: .caseInsensitive) != nil
+        } ? 3 : 4
+    }
+
+    func preview(id: PasteboardHistory.ID, query: String, limit: Int) throws -> String? {
+        guard let term = query.split(whereSeparator: \.isWhitespace).first else { return nil }
+        return try database.read { connection in
+            let rows = try Int64.fetchAll(connection, sql: "SELECT rowid FROM clipyMeTextContent WHERE id=?", arguments: [id.rawValue])
+            for rowID in rows {
+                if let preview = try ClipyMeTextReader.match(database: connection, rowID: rowID,
+                                                            term: String(term), previewLength: max(1, min(limit, 10_000))) {
+                    return preview
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func entry(_ row: Row) -> Entry {
+        let types: String = row["pasteboardTypes"]
+        return Entry(id: .init(rawValue: row["id"]), title: row["title"],
+                     types: (try? JSONDecoder().decode([String].self, from: Data(types.utf8))) ?? [],
+                     updatedAt: row["updateAt"], favorite: row["favorite"])
     }
 
     func menuDetails(includesThumbnails: Bool, limit: Int) throws -> [PasteboardHistoryDetail] {

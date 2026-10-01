@@ -14,6 +14,7 @@ import Dependencies
 import Foundation
 import SQLiteData
 import GRDB
+import SQLite3
 import SwiftData
 
 enum SQLiteDataDatabase {
@@ -45,6 +46,16 @@ extension DependencyValues {
     mutating func bootstrapDatabase() throws {
         var configuration = Configuration()
         configuration.prepareDatabase { database in
+            database.add(function: DatabaseFunction("clipymeRank", argumentCount: 2, pure: true) { values in
+                guard let title = String.fromDatabaseValue(values[0]),
+                      let query = String.fromDatabaseValue(values[1]) else { return 4 }
+                return ClipyMeHistoryStore.rank(title: title, query: query)
+            })
+            database.add(function: DatabaseFunction("clipymeAssetContains", argumentCount: 2, pure: true) { [weak database] values in
+                guard let database, let rowID = Int64.fromDatabaseValue(values[0]),
+                      let term = String.fromDatabaseValue(values[1]) else { return false }
+                return try ClipyMeTextReader.match(database: database, rowID: rowID, term: term) != nil
+            })
             // SQLite's built-in lower() only handles ASCII. Short search terms need
             // Unicode-aware matching because trigram indexes require 3 characters.
             database.add(function: DatabaseFunction("clipymeContains", argumentCount: 2, pure: true) { values in
@@ -73,5 +84,46 @@ extension DependencyValues {
                 startImmediately: false
             )
         }
+    }
+}
+
+/// Scan text assets without materializing a potentially very large clipboard blob.
+/// Overlap includes complete UTF-8 characters and matches crossing chunk boundaries.
+enum ClipyMeTextReader {
+    static func match(database: Database, rowID: Int64, term: String, previewLength: Int = 0) throws -> String? {
+        guard !term.isEmpty else { return nil }
+        var blob: OpaquePointer?
+        let opened = sqlite3_blob_open(database.sqliteConnection, "main", "pasteboardHistoryAssets", "data", rowID, 0, &blob)
+        guard opened == SQLITE_OK, let blob else {
+            throw NSError(domain: "ClipyMeTextRead", code: Int(opened))
+        }
+        defer { sqlite3_blob_close(blob) }
+        let size = Int(sqlite3_blob_bytes(blob))
+        let overlap = max(32, term.utf8.count * 4)
+        let chunkSize = max(65_536, overlap * 2)
+        var offset = 0
+        var carry = Data()
+        while offset < size {
+            let length = min(chunkSize, size - offset)
+            var chunk = Data(count: length)
+            let status = chunk.withUnsafeMutableBytes { bytes in
+                sqlite3_blob_read(blob, bytes.baseAddress, Int32(length), Int32(offset))
+            }
+            guard status == SQLITE_OK else { throw NSError(domain: "ClipyMeTextRead", code: Int(status)) }
+            var combined = carry
+            combined.append(chunk)
+            let text = String(decoding: combined, as: UTF8.self)
+            if let range = text.range(of: term, options: .caseInsensitive) {
+                guard previewLength > 0 else { return "" }
+                let start = text.index(range.lowerBound, offsetBy: -min(80, previewLength / 4), limitedBy: text.startIndex) ?? text.startIndex
+                let snippet = String(text[start...].prefix(previewLength))
+                let before = offset > carry.count || start != text.startIndex
+                let after = offset + length < size || text.distance(from: start, to: text.endIndex) > previewLength
+                return (before ? "…" : "") + snippet + (after ? "…" : "")
+            }
+            carry = Data(combined.suffix(overlap))
+            offset += length
+        }
+        return nil
     }
 }

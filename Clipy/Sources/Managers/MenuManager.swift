@@ -59,6 +59,10 @@ final class MenuManager: NSObject, NSMenuDelegate {
         (menu.items.first?.view as? ClipyMeMenuSearchView)?.reset()
     }
 
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.willHighlight(item)
+    }
+
     func menuDidClose(_ menu: NSMenu) {
         trackingMenu = nil
         (menu.items.first?.view as? ClipyMeMenuSearchView)?.stop()
