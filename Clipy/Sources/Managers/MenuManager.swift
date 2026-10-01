@@ -16,7 +16,7 @@ import Dependencies
 import RxCocoa
 import RxSwift
 
-final class MenuManager: NSObject {
+final class MenuManager: NSObject, NSMenuDelegate {
 
     // MARK: - Properties
     // Menus
@@ -46,7 +46,27 @@ final class MenuManager: NSObject {
     @Dependency(\.mainQueue)
     private var mainQueue
     private var cancellables: Set<AnyCancellable> = []
+    private let historyStore = ClipyMeHistoryStore()
+    private var favoriteIDs = Set<String>()
     private var snippetFolderDetails = [SnippetFolderDetail]()
+    private(set) var searchQuery = ""
+    private var trackingMenu: NSMenu?
+    private var rebuildAfterTracking = false
+
+    func menuWillOpen(_ menu: NSMenu) {
+        trackingMenu = menu
+        searchQuery = ""
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.reset()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        trackingMenu = nil
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.stop()
+        if rebuildAfterTracking {
+            rebuildAfterTracking = false
+            createClipMenu()
+        }
+    }
 
     // MARK: - Enum Values
     enum StatusType: Int {
@@ -105,6 +125,10 @@ extension MenuManager {
 // MARK: - Binding
 private extension MenuManager {
     func bind() {
+        NotificationCenter.default.publisher(for: ClipyMeHistoryStore.changed)
+            .receive(on: mainQueue)
+            .sink { [weak self] _ in self?.createClipMenu() }
+            .store(in: &cancellables)
         pasteboardHistoryRepository.observeHistories()
             .receive(on: mainQueue)
             .sink { [weak self] _ in self?.createClipMenu() }
@@ -182,15 +206,31 @@ private extension MenuManager {
 // MARK: - Menus
 private extension MenuManager {
      func createClipMenu() {
+        guard trackingMenu == nil else {
+            rebuildAfterTracking = true
+            return
+        }
+        favoriteIDs = (try? historyStore.favoriteIDs()) ?? []
         clipMenu = NSMenu(title: Constants.Application.name)
         historyMenu = NSMenu(title: Constants.Menu.history)
         snippetMenu = NSMenu(title: Constants.Menu.snippet)
 
-        addHistoryItems(clipMenu!)
-        addHistoryItems(historyMenu!)
+        installSearch(in: clipMenu!)
+        installSearch(in: historyMenu!)
+        addHistoryTools(clipMenu!)
+        addHistoryTools(historyMenu!)
+        addSearchableHistory(to: clipMenu!)
+        addSearchableHistory(to: historyMenu!)
 
         addSnippetItems(clipMenu!, separateMenu: true, details: snippetFolderDetails)
         addSnippetItems(snippetMenu!, separateMenu: false, details: snippetFolderDetails)
+        if snippetMenu?.items.isEmpty == true {
+            let empty = NSMenuItem(title: "No snippets yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            snippetMenu?.addItem(empty)
+        }
+        snippetMenu?.addItem(.separator())
+        snippetMenu?.addItem(NSMenuItem(title: String(localized: "Edit Snippets"), action: #selector(AppDelegate.showSnippetEditorWindow)))
 
         clipMenu?.addItem(NSMenuItem.separator())
 
@@ -201,9 +241,59 @@ private extension MenuManager {
         clipMenu?.addItem(NSMenuItem(title: String(localized: "Edit Snippets"), action: #selector(AppDelegate.showSnippetEditorWindow)))
         clipMenu?.addItem(NSMenuItem(title: String(localized: "Preferences"), action: #selector(AppDelegate.showPreferenceWindow)))
         clipMenu?.addItem(NSMenuItem.separator())
-        clipMenu?.addItem(NSMenuItem(title: String(localized: "Quit Clipy"), action: #selector(AppDelegate.terminate)))
+        clipMenu?.addItem(NSMenuItem(title: "Quit ClipyMe", action: #selector(AppDelegate.terminate)))
 
         statusBarItem.menu = clipMenu
+    }
+
+    func installSearch(in menu: NSMenu) {
+        menu.delegate = self
+        let header = NSMenuItem()
+        let search = ClipyMeMenuSearchView()
+        search.owningMenu = menu
+        search.onQuery = { [weak self] query in self?.searchQuery = query }
+        header.view = search
+        menu.addItem(header)
+    }
+
+    func addSearchableHistory(to menu: NSMenu) {
+        let start = menu.numberOfItems
+        addHistoryItems(menu)
+        let historyItems = Array(menu.items.dropFirst(start))
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.historyItems = historyItems
+        func removePlainKeyEquivalents(_ items: [NSMenuItem]) {
+            for item in items {
+                item.keyEquivalent = ""
+                if let submenu = item.submenu { removePlainKeyEquivalents(submenu.items) }
+            }
+        }
+        removePlainKeyEquivalents(historyItems)
+    }
+
+    func addHistoryTools(_ menu: NSMenu) {
+        let search = NSMenuItem(title: "Search / Edit History…", action: #selector(AppDelegate.showHistorySearch), keyEquivalent: "f")
+        search.keyEquivalentModifierMask = [.command]
+        search.isHidden = true
+        search.allowsKeyEquivalentWhenHidden = true
+        menu.addItem(search)
+        let sort = NSMenuItem(title: "Sort History", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for option in ClipyMeHistoryStore.Sort.allCases {
+            let item = NSMenuItem(title: option.title, action: #selector(changeHistorySort(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.rawValue
+            item.state = option == ClipyMeHistoryStore.selectedSort ? .on : .off
+            submenu.addItem(item)
+        }
+        sort.submenu = submenu
+        menu.addItem(sort)
+        menu.addItem(.separator())
+    }
+
+    @objc func changeHistorySort(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String,
+              let sort = ClipyMeHistoryStore.Sort(rawValue: value) else { return }
+        ClipyMeHistoryStore.selectedSort = sort
     }
 
     func menuItemTitle(_ title: String, listNumber: NSInteger, isMarkWithNumber: Bool) -> String {
@@ -261,6 +351,8 @@ private extension MenuManager {
         let placeInsideFolder = AppEnvironment.current.defaults.integer(forKey: Constants.UserDefaults.numberOfItemsPlaceInsideFolder)
         let maxHistory = AppEnvironment.current.defaults.integer(forKey: Constants.UserDefaults.maxHistorySize)
 
+        // Preserve folder offsets when tools precede the original history section.
+        let historyStart = menu.numberOfItems
         // History title
         let labelItem = NSMenuItem(title: String(localized: "History"), action: nil)
         labelItem.isEnabled = false
@@ -270,16 +362,19 @@ private extension MenuManager {
         let firstIndex = firstIndexOfMenuItems()
         var listNumber = firstIndex
         var subMenuCount = placeInLine
-        var subMenuIndex = 1 + placeInLine
+        var subMenuIndex = historyStart + 1 + placeInLine
 
         let ascending = !AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.reorderClipsAfterPasting)
         let isShowImage = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.showImageInTheMenu)
         let isShowColorCode = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.showColorPreviewInTheMenu)
-        let historyDetails = pasteboardHistoryRepository.fetchHistoryDetails(
-            ascending: ascending,
-            includesThumbnailAsset: isShowImage || isShowColorCode,
-            limit: maxHistory
-        )
+        let historyDetails: [PasteboardHistoryDetail]
+        if ClipyMeHistoryStore.selectedSort == .original {
+            historyDetails = pasteboardHistoryRepository.fetchHistoryDetails(
+                ascending: ascending, includesThumbnailAsset: isShowImage || isShowColorCode, limit: maxHistory)
+        } else {
+            historyDetails = (try? historyStore.menuDetails(
+                includesThumbnails: isShowImage || isShowColorCode, limit: maxHistory)) ?? []
+        }
         let currentSize = historyDetails.count
         var i = 0
         historyDetails.forEach { historyDetail in
@@ -353,6 +448,9 @@ private extension MenuManager {
             menuItem.title = menuItemTitle("(Files)", listNumber: listNumber, isMarkWithNumber: isMarkWithNumber)
         }
 
+        if favoriteIDs.contains(history.id.rawValue) {
+            menuItem.title = "★ " + menuItem.title
+        }
         if isShowImage || isShowColorCode,
            let thumbnailAsset = historyDetail.thumbnailAsset,
            let image = NSImage(data: thumbnailAsset.data),

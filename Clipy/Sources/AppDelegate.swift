@@ -24,6 +24,8 @@ class AppDelegate: NSObject, NSMenuItemValidation {
 
     // MARK: - Properties
     private(set) var updaterController: SPUStandardUpdaterController?
+    lazy var releaseUpdates = ClipyMeReleaseUpdates()
+    private lazy var historyController = ClipyMeHistoryController()
     private let screenshotObserver = ScreenShotObserver()
     private let disposeBag = DisposeBag()
     private let historyPruningScheduler = SerialDispatchQueueScheduler(qos: .utility)
@@ -39,6 +41,7 @@ class AppDelegate: NSObject, NSMenuItemValidation {
     // MARK: - Init
     override func awakeFromNib() {
         super.awakeFromNib()
+        if CommandLine.arguments.contains("--clipyme-permission-check") { return }
         // If the SQLite database file does not exist yet, start the database and then migrate Realm data to SQLiteData.
         let sqliteDatabaseExists = (try? SQLiteDataDatabase.databaseURL().checkResourceIsReachable()) ?? false
         prepareDependencies { values in
@@ -58,6 +61,10 @@ class AppDelegate: NSObject, NSMenuItemValidation {
     }
 
     // MARK: - Menu Actions
+    @objc func showHistorySearch() {
+        historyController.showAdvanced(query: AppEnvironment.current.menuManager.searchQuery)
+    }
+
     @objc func showPreferenceWindow() {
         NSApp.activate(ignoringOtherApps: true)
         CPYPreferencesWindowController.sharedController.showWindow(self)
@@ -159,12 +166,29 @@ class AppDelegate: NSObject, NSMenuItemValidation {
 extension AppDelegate: NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
+        if CommandLine.arguments.contains("--clipyme-permission-check") {
+            print("Accessibility trusted:", AXIsProcessTrusted())
+            print("Event posting allowed:", CGPreflightPostEventAccess())
+            NSApp.terminate(nil)
+            return
+        }
+        if CommandLine.arguments.contains("--clipyme-search-benchmark") {
+            let store = ClipyMeHistoryStore()
+            for query in ["a", "it", "http", "clip", "unlikely-query-398791"] {
+                let start = CFAbsoluteTimeGetCurrent()
+                let count = (try? store.search(query: query, filter: .all, sort: .newest, limit: 31).count) ?? -1
+                print("Search length=\(query.count), rows=\(count), ms=\((CFAbsoluteTimeGetCurrent() - start) * 1000)")
+            }
+            NSApp.terminate(nil)
+            return
+        }
         // Environments
         AppEnvironment.replaceCurrent(environment: AppEnvironment.fromStorage())
         // UserDefaults
         CPYUtilities.registerUserDefaultKeys()
 
         guard context != .test else { return }
+        releaseUpdates.start()
 
         // SDKs
         CPYUtilities.initSDKs()
@@ -176,14 +200,8 @@ extension AppDelegate: NSApplicationDelegate {
             promptToAddLoginItems()
         }
 
-        // Sparkle
-        self.updaterController = SPUStandardUpdaterController(
-            startingUpdater: AppEnvironment.current.defaults.bool(forKey: Constants.Update.enableAutomaticCheck),
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
-        updaterController?.updater.updateCheckInterval = TimeInterval(AppEnvironment.current.defaults.integer(forKey: Constants.Update.checkInterval))
-        updaterController?.updater.clearFeedURLFromUserDefaults()
+        // Custom builds must never be replaced by the upstream Sparkle feed.
+        self.updaterController = nil
 
         // Binding Events
         bind()

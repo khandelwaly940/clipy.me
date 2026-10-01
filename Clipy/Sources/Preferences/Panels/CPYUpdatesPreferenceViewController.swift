@@ -11,33 +11,24 @@
 //
 
 import Cocoa
-import Combine
-import Sparkle
 
 class CPYUpdatesPreferenceViewController: NSViewController {
 
-    // MARK: - Properties
     @IBOutlet private weak var lastUpdateCheckDateTextField: NSTextField!
     @IBOutlet private weak var versionTextField: NSTextField!
 
-    private var updaterController: SPUStandardUpdaterController? {
-        guard let appDelegate = NSApp.delegate as? AppDelegate else { return nil }
-        return appDelegate.updaterController
-    }
-    private var cancellables: Set<AnyCancellable> = []
-
-    // MARK: - Initialize
     override func loadView() {
         super.loadView()
-        updaterController?.updater.publisher(for: \.lastUpdateCheckDate)
-            .compactMap { $0 }
-            .assign(to: \.objectValue, on: lastUpdateCheckDateTextField)
-            .store(in: &cancellables)
+        lastUpdateCheckDateTextField.formatter = nil
+        if let date = UserDefaults.standard.object(forKey: ClipyMeReleaseUpdates.lastSuccessKey) as? Date {
+            lastUpdateCheckDateTextField.stringValue = "Last checked: " + date.formatted(date: .abbreviated, time: .shortened)
+        } else {
+            lastUpdateCheckDateTextField.stringValue = "Updates from khandelwaly940/clipy.me"
+        }
         versionTextField.stringValue = "v\(Bundle.main.appVersion ?? "")"
     }
 
     @IBAction private func checkForUpdates(_ sender: Any) {
-        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
-        appDelegate.updaterController?.checkForUpdates(sender)
+        (NSApp.delegate as? AppDelegate)?.releaseUpdates.check(manual: true)
     }
 }

@@ -18,6 +18,9 @@ extension DatabaseMigrator {
     mutating func registerMigration() {
         registerMigrationV1()
         registerMigrationV2()
+        registerMigration("ClipyMe full text and favorites") { database in
+            try database.execute(sql: ClipyMeHistoryStore.migrationSQL)
+        }
     }
 
     mutating func registerMigrationV1() {

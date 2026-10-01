@@ -13,7 +13,9 @@
 import Foundation
 import Cocoa
 
-final class AccessibilityService {}
+final class AccessibilityService {
+    private var hasShownPermissionAlert = false
+}
 
 // MARK: - Permission
 extension AccessibilityService {
@@ -22,9 +24,16 @@ extension AccessibilityService {
     func isAccessibilityEnabled(isPrompt: Bool) -> Bool {
         guard #available(macOS 10.14, *) else { return true }
 
+        // Pasting needs permission to post events. Check that exact capability
+        // before the broader Accessibility API, which can disagree after updates.
+        if #available(macOS 10.15, *), CGPreflightPostEventAccess() {
+            hasShownPermissionAlert = false
+            return true
+        }
         let checkOptionPromptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let opts = [checkOptionPromptKey: false] as CFDictionary
         if AXIsProcessTrustedWithOptions(opts) {
+            hasShownPermissionAlert = false
             return true
         }
         // AXIsProcessTrustedWithOptions can return false for unsigned/ad-hoc signed
@@ -41,6 +50,7 @@ extension AccessibilityService {
         // accepted the call — trust is still granted.
         // .apiDisabled or .cannotComplete means no trust.
         if result == .success || result == .noValue {
+            hasShownPermissionAlert = false
             return true
         }
         if isPrompt {
@@ -51,9 +61,11 @@ extension AccessibilityService {
     }
 
     func showAccessibilityAuthenticationAlert() {
+        guard !hasShownPermissionAlert else { return }
+        hasShownPermissionAlert = true
         let alert = NSAlert()
         alert.messageText = String(localized: "Please allow Accessibility")
-        alert.informativeText = String(localized: "To do this action please allow Accessibility in Security Privacy preferences located in System Preferences")
+        alert.informativeText = "The clip has been copied. macOS has not authorized this build to paste automatically. If ClipyMe is already enabled in Privacy & Security → Accessibility, remove its old entry and add /Applications/ClipyMe.app again. This build uses a stable signing identity for future updates."
         alert.addButton(withTitle: String(localized: "Open System Preferences"))
         NSApp.activate(ignoringOtherApps: true)
 

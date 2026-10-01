@@ -13,6 +13,7 @@
 import Dependencies
 import Foundation
 import SQLiteData
+import GRDB
 import SwiftData
 
 enum SQLiteDataDatabase {
@@ -42,19 +43,16 @@ enum SQLiteDataDatabase {
 
 extension DependencyValues {
     mutating func bootstrapDatabase() throws {
-        @Dependency(\.context) var context
-
         var configuration = Configuration()
-        #if DEBUG
-        configuration.prepareDatabase {
-            switch context {
-            case .live, .preview:
-                $0.trace { print($0.expandedDescription) }
-            case .test:
-                break
-            }
+        configuration.prepareDatabase { database in
+            // SQLite's built-in lower() only handles ASCII. Short search terms need
+            // Unicode-aware matching because trigram indexes require 3 characters.
+            database.add(function: DatabaseFunction("clipymeContains", argumentCount: 2, pure: true) { values in
+                guard let text = String.fromDatabaseValue(values[0]),
+                      let term = String.fromDatabaseValue(values[1]) else { return false }
+                return text.range(of: term, options: .caseInsensitive) != nil
+            })
         }
-        #endif
         let database = try SQLiteData.defaultDatabase(
             path: SQLiteDataDatabase.databaseURL().absoluteString,
             configuration: configuration
@@ -62,14 +60,7 @@ extension DependencyValues {
 
         var migrator = DatabaseMigrator()
         migrator.registerMigration()
-        #if DEBUG
-        switch context {
-        case .live, .preview:
-            migrator.eraseDatabaseOnSchemaChange = true
-        case .test:
-            break
-        }
-        #endif
+        // Never erase personal clipboard data when a development schema changes.
         try migrator.migrate(database)
 
         defaultDatabase = database

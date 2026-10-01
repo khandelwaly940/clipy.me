@@ -155,3 +155,7 @@ build-iPhoneSimulator/
 
 # Firebase
 GoogleService-Info.plist
+
+# Local migration tooling
+__pycache__/
+*.pyc

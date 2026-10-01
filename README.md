@@ -1,72 +1,64 @@
-<div align="center">
-  <img src="./Resources/clipy_logo.png" width="400">
-</div>
+# ClipyMe
 
-<br>
+A lightweight, native macOS clipboard manager based on [Clipy](https://github.com/Clipy/Clipy), with search inside the original menu, sorting, favorites, and a text editor. macOS 13 or newer; Apple Silicon and Intel.
 
-![CI](https://github.com/Clipy/Clipy/workflows/CI/badge.svg)
-[![Release version](https://img.shields.io/github/release/Clipy/Clipy.svg)](https://github.com/Clipy/Clipy/releases/latest)
-[![OpenCollective](https://opencollective.com/clipy/backers/badge.svg)](#backers)
-[![OpenCollective](https://opencollective.com/clipy/sponsors/badge.svg)](#sponsors)
+## Install or migrate from Clipy
 
-Clipy is a Clipboard extension app for macOS.
+Run in Terminal:
 
----
+```sh
+curl -fsSL https://raw.githubusercontent.com/khandelwaly940/clipy.me/main/scripts/install.sh -o /tmp/clipyme-install.sh && bash /tmp/clipyme-install.sh
+```
 
-__Requirement__: macOS 13 Ventura or later
+[Read the installer](scripts/install.sh) · [Download release](https://github.com/khandelwaly940/clipy.me/releases/latest)
 
-__Distribution Site__ : <https://clipy-app.com>
+No Xcode, Homebrew, or Python is needed. The installer downloads the latest universal release, checks its SHA-256 checksum and signatures, stops the clipboard monitors, makes a private verified backup, preserves preferences and login settings, and launches ClipyMe. Run the same command to update.
 
-<img src="http://clipy-app.com/img/screenshot1.png" width="400">
+Supported migrations: Clipy 1.2.x (its existing Realm importer) and Clipy 1.3.0 (verified SQLite copy), plus existing ClipyMe installations. Newer unknown Clipy database schemas are refused to protect data. SQLite migrations and updates compare every stored row and asset byte before switching. Realm conversion has fixture coverage, but has not been tested on every historical Clipy release. Keep the backup until you have checked your history and snippets.
 
-### Development Environment
-* macOS 26 Tahoe
-* Xcode 26.5
+Original Clipy and its data remain on disk. Backups live in `~/Library/Application Support/ClipyMe Backups/`. The installer restores the previous app/data if installation fails after the switch. Do not run both clipboard managers at once.
 
-### How to Build
-macOS checks Accessibility permission by the app's code signature. If Clipy is built without a stable signing certificate, macOS may ask for Accessibility permission again for every build.
+On first installation, enable **ClipyMe** in **System Settings → Privacy & Security → Accessibility**. macOS does not transfer Clipy's permission. The installer creates a signing identity in your login Keychain and reuses it on updates so the app's identity stays stable. This is a community build, locally signed by the installer, not an Apple-notarized distribution.
 
-For this reason, the default signing settings use the Clipy signing certificate. This certificate is available only to the maintainer, so local builds require switching to ad-hoc signing before building.
+## Everyday use
 
-#### Build for ad-hoc usage
-1. Open `Clipy.xcodeproj` in Xcode.
-2. Switch to ad-hoc build mode:
-    1. Open `Configurations/CodeSigning.xcconfig`.
-    2. Uncomment `#include "Configurations/CodeSigning-AdHoc.xcconfig"`.
-3. Build the `Clipy` scheme.
+- Open the normal Clipy menu using your existing shortcut (for example Control–Space), then type. Results appear in that menu immediately after the database query finishes. There is no debounce delay or flashing “Searching…” row.
+- Clear the query to restore the original history folders and menu layout. Click a clip or press Return on a result to use the original paste action.
+- **Sort History** chooses original order, newest, oldest, alphabetical, or content type. Search uses the same order.
+- **Command–F** opens the advanced history panel, with filters, favorites, copy/paste, and plain-text editing. The redundant Search/Edit menu row is hidden.
+- Text replacement is transactional. Rich content can be edited as a new plain-text clip, preserving the original. Favorites survive automatic history pruning; an explicit Clear History still clears them.
 
-If you want to use Firebase features, place your own `GoogleService-Info.plist` in `Clipy/GoogleService`. This file is not required for local builds without Firebase.
+Search uses SQLite's existing database pool and a small full-text index. It does not decode images, poll the history, or maintain a duplicate in-memory clipboard cache. Queries run off the UI thread; superseded queued requests are cancelled and stale results discarded. The menu displays up to 30 matches; Command–F supports more results. Actual latency depends on history size, query, hardware, and sort order.
 
-### Localization Contributors
-Clipy is looking for localization contributors.  
-If you can contribute, please see [CONTRIBUTING.md](https://github.com/Clipy/Clipy/blob/master/.github/CONTRIBUTING.md)
+## Updates
 
-### Distribution
-If you distribute derived work, especially in the Mac App Store, I ask you to follow two rules:
+ClipyMe checks [this repository's releases](https://github.com/khandelwaly940/clipy.me/releases) at most once daily by default. Existing disabled, weekly, or monthly preferences are respected. Change them in **Preferences → Updates**. “Check Now” is available regardless of automatic settings.
 
-1. Don't use `Clipy` and `ClipMenu` as your product name.
-2. Follow the MIT license terms.
+A new version prompts once with **View Release** or **Later**. Nothing is downloaded or installed automatically. Run the installer again when ready. Official Clipy releases cannot overwrite this custom build.
 
-Thank you for your cooperation.
+## Build and validate
 
-### Privacy Policy
-Please see [PRIVACY.md](./PRIVACY.md) for information about local data storage,
-network communication, analytics, and crash reporting.
+Developed with Xcode 27; the upstream project requires a recent Swift/Xcode toolchain.
 
-### Backers
-Support us with a monthly donation and help us continue our activities. [[Become a backer](https://opencollective.com/clipy#backer)]
+```sh
+xcodebuild -project Clipy.xcodeproj -scheme Clipy -derivedDataPath build/DerivedData \
+  -skipPackagePluginValidation -skipMacroValidation \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO test
+bash scripts/package_release.sh
+```
 
-<a href="https://opencollective.com/clipy#backers"><img src="https://opencollective.com/clipy/backers.svg?avatarHeight=36&width=600" /></a>
+The packaging script builds both architectures and the standalone migration helpers, verifies signatures, runs migration verification tests, and produces `build/release/ClipyMe-macos-universal.zip` and its checksum. Developer tools are required only for building. Release packaging does not include signing keys, clipboard data, settings, or Firebase configuration.
 
-### Sponsors
-Become a sponsor and get your logo on our README on Github with a link to your site. [[Become a sponsor](https://opencollective.com/clipy#sponsor)]
+To verify a downloaded release without installation:
 
-<a href="https://opencollective.com/clipy#sponsors"><img src="https://opencollective.com/clipy/sponsors.svg?avatarHeight=36&width=600" /></a>
+```sh
+bash /tmp/clipyme-install.sh --verify-only
+```
 
-### Licence
-Clipy is available under the MIT license. See the LICENSE file for more info.
+## Recovery
 
-Icons are copyrighted by their respective authors.
+Quit ClipyMe before restoring. Each backup includes `Previous.app`, `preferences.plist`, and the source application's support data when present. For migration from original Clipy, quit ClipyMe and reopen `/Applications/Clipy.app`; its original settings/data remain available. Clips captured only in ClipyMe are separate, so retain its data as well. For an update rollback, restore the backup app and corresponding custom support/preferences together while both apps are closed.
 
-### Special Thanks
-__Thank you for [@naotaka](https://github.com/naotaka) who have published [ClipMenu](https://github.com/naotaka/ClipMenu) as OSS.__
+## Credits and license
+
+Maintained by [Yash Khandelwal](https://github.com/khandelwaly940). Based on Clipy 1.3.0; this is an independent fork, not an official Clipy release. Thanks to the Clipy Project and ClipMenu contributors. The original MIT license and notices are retained in [LICENSE](LICENSE). Third-party notices are included in the app's acknowledgements and dependencies. [Privacy policy](PRIVACY.md).

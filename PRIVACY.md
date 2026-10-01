@@ -1,111 +1,13 @@
-# Privacy Policy
+# ClipyMe privacy
 
-Last updated: June 4, 2026
+Updated October 1, 2026.
 
-Clipy is a clipboard extension app for macOS. Clipboard data can contain
-sensitive information, so Clipy will never transmit clipboard contents or
-snippet contents to external services without the user's consent.
+Clipboard history, snippets, preferences, favorites, and the text search index stay on your Mac. ClipyMe does not send clipboard contents or search queries to external services. Data is not encrypted by the app. Installer backups are private to your user account and retained until you remove them.
 
-This policy clarifies whether Clipy collects personally identifying information,
-whether Clipy collects copied contents, and what network communication Clipy
-performs.
+Automatic update checks contact `api.github.com` for the latest public release of `khandelwaly940/clipy.me`. GitHub receives standard network information, including your IP address and an app-version User-Agent. Checks run at most once daily unless you explicitly click Check Now; disabled or longer-interval settings are respected. Opening a release page or running the installer also contacts GitHub and its download hosts.
 
-## Summary
+The public build includes no Firebase configuration, so inherited Firebase analytics and crash reporting are not configured. Developers who add their own Firebase configuration change that behavior and must disclose it. The inherited Sparkle updater is disabled; updates use this repository's release-notice service.
 
-- Clipy does not ask users to provide names, email addresses, account
-  information, or other directly identifying personal information.
-- Clipy does not transmit clipboard text, clipboard images, snippets, or other
-  copied contents to Clipy servers, Firebase, or any other third-party service.
-- Clipy's intended network communication is limited to update checks via
-  `clipy-app.com` and diagnostics/usage measurement via Firebase.
-- Firebase Analytics / Firebase Crashlytics are enabled by default and can be
-  disabled in Clipy's Preferences.
+The installer does not upload clipboard data, preferences, backups, or its local signing key. Its backup verifier reports counts and verification status, not clip contents. The signing key remains in your login Keychain.
 
-## Data Stored Locally
-
-Clipy stores clipboard history, snippets, preferences, and related app data
-locally on your Mac.
-
-Clipboard contents and snippets are not sent to external services by Clipy.
-However, clipboard managers can store sensitive information locally. We
-recommend excluding password managers and other sensitive apps from Clipy's
-history recording when possible.
-
-Clipy does not currently claim that locally stored clipboard history is
-encrypted. If your Mac contains sensitive data, we recommend enabling FileVault
-and using macOS security features appropriately.
-
-## Network Communication
-
-Clipy's intended network communication is limited to the following services:
-
-- `clipy-app.com`: used by Sparkle to check for app updates.
-- Firebase: used for analytics and crash reporting.
-
-Clipy does not intentionally use other network services.
-
-## Firebase Analytics
-
-Clipy uses Firebase Analytics to understand basic app usage, such as the number
-of users, app launches, app version, macOS version, language, and general feature
-usage.
-
-Firebase Analytics is enabled by default. You can disable analytics in Clipy's
-Preferences.
-
-Clipy does not use Firebase Analytics to collect user-created or copied content,
-including clipboard contents, snippet contents, file contents, copied secrets,
-or personal information entered by the user.
-
-## Firebase Crashlytics
-
-Clipy uses Firebase Crashlytics to collect crash reports and error diagnostics.
-Crash reports help us understand and fix stability problems.
-
-Crash reports may include information such as:
-
-- App version
-- macOS version
-- Device model or architecture
-- Stack traces
-- Crash timestamps
-- Firebase installation identifiers
-- Diagnostic logs added by Clipy
-
-Clipy does not intentionally include clipboard contents or snippet contents in
-Crashlytics logs, custom keys, or error reports.
-
-You can disable crash reporting in Clipy's Preferences.
-
-## Update Checks
-
-Clipy uses Sparkle to check for updates from `clipy-app.com`. Update checks may
-send standard request information such as the app version, macOS version, and IP
-address to the update server.
-
-## Third-Party Processing
-
-Firebase is provided by Google. Data sent to Firebase is processed according to
-Google's Firebase terms and privacy documentation.
-
-Sparkle is used for update checks. The update feed is hosted by Clipy on
-`clipy-app.com`.
-
-## User Controls
-
-You can enable or disable analytics and crash reporting from Clipy's Preferences.
-
-When disabled, Clipy will stop intentionally sending analytics and crash
-diagnostic data from future app usage. Some previously sent data may remain in
-Firebase according to Firebase's retention policies.
-
-## Changes
-
-This privacy policy may be updated when Clipy's behavior or third-party services
-change.
-
-## Contact
-
-For privacy or security questions, please open an issue on GitHub.
-
-GitHub: https://github.com/Clipy/Clipy
+For issues, visit https://github.com/khandelwaly940/clipy.me/issues. Do not include clipboard databases, secrets, or private snippets in public reports.

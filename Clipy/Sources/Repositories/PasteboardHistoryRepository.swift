@@ -14,6 +14,7 @@ import AppKit
 import Combine
 import Dependencies
 import SQLiteData
+import GRDB
 
 protocol PasteboardHistoryRepositoryProtocol {
     func observeHistories() -> AnyPublisher<[PasteboardHistory], Never>
@@ -166,22 +167,17 @@ final class PasteboardHistoryRepository: PasteboardHistoryRepositoryProtocol {
     }
 
     func deleteOverflowingHistories(maxHistorySize: Int) {
-        guard maxHistorySize > 0 else {
-            deleteAll()
-            return
-        }
         withErrorReporting {
             try database.write { database in
-                let deletingIDs = try PasteboardHistory
-                    .order { $0.updateAt.desc() }
-                    .limit(-1, offset: maxHistorySize)
-                    .select { $0.id }
-                    .fetchAll(database)
-                guard !deletingIDs.isEmpty else { return }
-                try PasteboardHistory
-                    .delete()
-                    .where { $0.id.in(deletingIDs) }
-                    .execute(database)
+                // Favorites do not consume the normal history allowance.
+                try database.execute(sql: """
+                    DELETE FROM pasteboardHistories WHERE id IN (
+                        SELECT h.id FROM pasteboardHistories h
+                        LEFT JOIN clipyMeFavorites f ON f.historyID=h.id
+                        WHERE f.historyID IS NULL
+                        ORDER BY h.updateAt DESC, h.id LIMIT -1 OFFSET ?
+                    )
+                    """, arguments: [max(0, maxHistorySize)])
             }
         }
     }
