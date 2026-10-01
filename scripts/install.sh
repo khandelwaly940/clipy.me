@@ -78,7 +78,12 @@ if [ -z "$archive" ]; then
   echo 'Downloading the latest ClipyMe release…'
   archive="$work/ClipyMe-macos-universal.zip"
   checksum_file="$work/ClipyMe-macos-universal.zip.sha256"
-  base="https://github.com/$repo/releases/latest/download"
+  # Resolve once, then pin both files to the same release. This also avoids
+  # stale/slow latest-download redirects and mixed-version checksum races.
+  latest_url=$(/usr/bin/curl --fail --silent --show-error --head --location --retry 2 --connect-timeout 15 --max-time 60 --proto '=https' --tlsv1.2 -o /dev/null --write-out '%{url_effective}' "https://github.com/$repo/releases/latest")
+  tag="${latest_url#https://github.com/$repo/releases/tag/}"
+  [[ "$tag" =~ ^v?[0-9]+(\.[0-9]+){1,3}$ ]] || fail 'Could not resolve the latest stable release.'
+  base="https://github.com/$repo/releases/download/$tag"
   /usr/bin/curl --fail --location --retry 2 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 1024 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip" -o "$archive"
   /usr/bin/curl --fail --location --retry 2 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 1024 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip.sha256" -o "$checksum_file"
 fi
