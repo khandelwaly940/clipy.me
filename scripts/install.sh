@@ -79,8 +79,8 @@ if [ -z "$archive" ]; then
   archive="$work/ClipyMe-macos-universal.zip"
   checksum_file="$work/ClipyMe-macos-universal.zip.sha256"
   base="https://github.com/$repo/releases/latest/download"
-  /usr/bin/curl --fail --location --retry 2 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip" -o "$archive"
-  /usr/bin/curl --fail --location --retry 2 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip.sha256" -o "$checksum_file"
+  /usr/bin/curl --fail --location --retry 2 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 1024 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip" -o "$archive"
+  /usr/bin/curl --fail --location --retry 2 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 1024 --proto '=https' --tlsv1.2 "$base/ClipyMe-macos-universal.zip.sha256" -o "$checksum_file"
 fi
 [ -f "$archive" ] && [ -f "$checksum_file" ] || fail 'Archive and checksum file are required.'
 expected=$(/usr/bin/awk 'NR==1 {print $1}' "$checksum_file")
