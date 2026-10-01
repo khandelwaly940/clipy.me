@@ -16,7 +16,11 @@ for arch in arm64 x86_64; do
 done
 lipo -create "$out/verify-arm64" "$out/verify-x86_64" -output "$stage/ClipyMeVerify"
 lipo -create "$out/login-arm64" "$out/login-x86_64" -output "$stage/ClipyMeLogin"
-lipo "$stage/ClipyMe.app/Contents/MacOS/ClipyMe" -verify_arch arm64 x86_64
+for arch in arm64 x86_64; do
+  for binary in "$stage/ClipyMe.app/Contents/MacOS/ClipyMe" "$stage/ClipyMeVerify" "$stage/ClipyMeLogin"; do
+    lipo "$binary" -verify_arch "$arch"
+  done
+done
 codesign --force --deep --sign - "$stage/ClipyMe.app"
 codesign --force --sign - "$stage/ClipyMeVerify"
 codesign --force --sign - "$stage/ClipyMeLogin"
