@@ -25,6 +25,10 @@ struct ClipyMeHistoryStoreTests {
         for index in 0..<280 {
             try save("common clip \(index)" + (index < 4 ? " rareolder" : ""), at: index)
         }
+        let misleading = try save("unrelated body", at: 1000)
+        try database.write { connection in
+            try connection.execute(sql: "UPDATE pasteboardHistories SET title='common' WHERE id=?", arguments: [misleading.rawValue])
+        }
         for sort in ClipyMeHistoryStore.Sort.allCases {
             let complete = try store.search(query: "common", filter: .all, sort: sort, limit: 300)
             let menu = try store.search(query: "common", filter: .all, sort: sort, limit: 31)
@@ -48,6 +52,18 @@ struct ClipyMeHistoryStoreTests {
         _ = try save("abc --- bcd", at: 6)
         #expect(try store.search(query: "abcd", filter: .all, sort: .bestMatch).isEmpty)
         #expect(try store.search(query: "alpha absent", filter: .all, sort: .bestMatch).isEmpty)
+    }
+
+    @Test func binaryAssetBytesAreNotTextSearchMatches() throws {
+        let id = try save("ordinary unrelated clip")
+        try database.write { connection in
+            try connection.execute(sql: """
+                INSERT INTO pasteboardHistoryAssets(id,pasteboardHistoryID,"index",pasteboardType,data)
+                VALUES (?, ?, 1, 'public.png', ?)
+                """, arguments: [UUID().uuidString, id.rawValue, Data("zz binaryonlyneedle".utf8)])
+        }
+        #expect(try store.search(query: "zz", filter: .all, sort: .bestMatch).isEmpty)
+        #expect(try store.search(query: "binaryonlyneedle", filter: .all, sort: .bestMatch).isEmpty)
     }
 
     @Test func streamingSearchAndPreviewCrossUTF8ChunkBoundary() throws {

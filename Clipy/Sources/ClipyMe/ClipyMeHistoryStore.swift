@@ -99,6 +99,8 @@ final class ClipyMeHistoryStore {
     func search(query: String, filter: Filter, sort: Sort, limit: Int = 200, offset: Int = 0) throws -> [Entry] {
         let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         var conditions = [String]()
+        var indexConditions = [String]()
+        var indexArguments = StatementArguments()
         var arguments = StatementArguments()
         for word in words {
             if word.count >= 3 && word.utf8.allSatisfy({ $0 < 128 }) {
@@ -109,14 +111,23 @@ final class ClipyMeHistoryStore {
                 let grams = Set((0..<(letters.count - 2)).prefix(32).map {
                     "\"" + String(letters[$0...($0 + 2)]).replacingOccurrences(of: "\"", with: "\"\"") + "\""
                 }).sorted().joined(separator: " AND ")
+                indexConditions.append("h.id IN (SELECT pasteboardHistoryID FROM pasteboardHistoryAssets WHERE rowid IN (SELECT rowid FROM clipyMeFullText WHERE clipyMeFullText MATCH ?))")
+                indexArguments += [grams]
                 conditions.append("""
-                    EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id
-                      AND s.rowid IN (SELECT rowid FROM clipyMeFullText WHERE clipyMeFullText MATCH ?)
-                      AND clipymeAssetContains(s.rowid, ?))
+                    EXISTS (SELECT 1 FROM pasteboardHistoryAssets s WHERE s.pasteboardHistoryID=h.id
+                      AND CASE WHEN s.pasteboardType IN ('public.utf8-plain-text', 'NSStringPboardType')
+                        AND s.rowid IN (SELECT rowid FROM clipyMeFullText WHERE clipyMeFullText MATCH ?)
+                        THEN clipymeAssetContains(s.rowid, ?) ELSE 0 END)
                     """)
                 arguments += [grams, word]
             } else {
-                conditions.append("EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id AND clipymeAssetContains(s.rowid, ?))")
+                // CASE guarantees binary assets are never opened, even if SQLite
+                // reorders the other WHERE predicates while optimizing the view.
+                conditions.append("""
+                    EXISTS (SELECT 1 FROM pasteboardHistoryAssets s WHERE s.pasteboardHistoryID=h.id
+                      AND CASE WHEN s.pasteboardType IN ('public.utf8-plain-text', 'NSStringPboardType')
+                        THEN clipymeAssetContains(s.rowid, ?) ELSE 0 END)
+                    """)
                 arguments += [word]
             }
         }
@@ -131,14 +142,64 @@ final class ClipyMeHistoryStore {
         }
         let predicate = conditions.isEmpty ? "1" : conditions.joined(separator: " AND ")
         var order = sort.orderSQL
+        var rankArguments = StatementArguments()
         if sort == .bestMatch, !words.isEmpty {
             let phrase = words.joined(separator: " ")
-            order = "clipymeRank(h.title, ?), length(h.title), h.updateAt DESC, h.id"
-            arguments += [phrase]
+            if phrase.utf8.allSatisfy({ $0 < 128 }) {
+                let title = "trim(h.title, char(9) || char(10) || char(13) || ' ')"
+                let titleTerms = words.map { _ in "instr(lower(h.title), lower(?)) > 0" }.joined(separator: " AND ")
+                order = """
+                    CASE WHEN length(CAST(h.title AS BLOB)) = length(h.title) THEN
+                      CASE WHEN \(title) = ? COLLATE NOCASE THEN 0
+                           WHEN instr(lower(\(title)), lower(?)) = 1 THEN 1
+                           WHEN instr(lower(\(title)), lower(?)) > 0 THEN 2
+                           WHEN (\(titleTerms)) THEN 3 ELSE 4 END
+                    ELSE clipymeRank(h.title, ?) END, length(h.title), h.updateAt DESC, h.id
+                    """
+                rankArguments += [phrase, phrase, phrase]
+                rankArguments += StatementArguments(words)
+                rankArguments += [phrase]
+            } else {
+                order = "clipymeRank(h.title, ?), length(h.title), h.updateAt DESC, h.id"
+                rankArguments += [phrase]
+            }
         }
+        arguments += rankArguments
         arguments += [max(1, min(limit, 1000)), max(0, offset)]
         return try database.read { connection in
-            try Row.fetchAll(connection, sql: """
+            // Title matches always outrank body-only matches. Verify a bounded
+            // page of the best titles first; stop only when the whole requested
+            // page is valid. Otherwise fall back to the full-history query.
+            if sort == .bestMatch, filter == .all, offset == 0, limit > 0, limit <= 31,
+               !words.isEmpty, words.allSatisfy({ $0.utf8.allSatisfy { $0 < 128 } }) {
+                let titlePredicate = words.map { _ in
+                    "CASE WHEN length(CAST(h.title AS BLOB)) = length(h.title) THEN instr(lower(h.title), lower(?)) > 0 ELSE clipymeRank(h.title, ?) < 4 END"
+                }.joined(separator: " AND ")
+                let indexPredicate = indexConditions.isEmpty ? "1" : indexConditions.joined(separator: " AND ")
+                var titleArguments = indexArguments
+                titleArguments += StatementArguments(words.flatMap { [$0, $0] })
+                titleArguments += rankArguments
+                let candidates = try Row.fetchAll(connection, sql: """
+                    SELECT h.*, f.historyID IS NOT NULL AS favorite FROM pasteboardHistories h
+                    LEFT JOIN clipyMeFavorites f ON f.historyID=h.id
+                    WHERE \(indexPredicate) AND \(titlePredicate)
+                      AND EXISTS (SELECT 1 FROM clipyMeTextContent s WHERE s.id=h.id)
+                    ORDER BY \(order) LIMIT 128
+                    """, arguments: titleArguments)
+                var verified = [Entry]()
+                for candidate in candidates {
+                    let id: String = candidate["id"]
+                    let assetRows = try Int64.fetchAll(connection, sql: "SELECT rowid FROM clipyMeTextContent WHERE id=?", arguments: [id])
+                    let valid = try words.allSatisfy { word in
+                        try assetRows.contains { rowID in
+                            try ClipyMeTextReader.match(database: connection, rowID: rowID, term: word) != nil
+                        }
+                    }
+                    if valid { verified.append(Self.entry(candidate)) }
+                    if verified.count == limit { return verified }
+                }
+            }
+            return try Row.fetchAll(connection, sql: """
                 SELECT h.*, f.historyID IS NOT NULL AS favorite FROM pasteboardHistories h
                 LEFT JOIN clipyMeFavorites f ON f.historyID=h.id
                 WHERE \(predicate) ORDER BY \(order) LIMIT ? OFFSET ?
@@ -148,12 +209,13 @@ final class ClipyMeHistoryStore {
 
     static func rank(title: String, query: String) -> Int {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.compare(query, options: .caseInsensitive) == .orderedSame { return 0 }
-        if let range = title.range(of: query, options: .caseInsensitive) {
-            return range.lowerBound == title.startIndex ? 1 : 2
-        }
-        return query.split(whereSeparator: \.isWhitespace).allSatisfy {
-            title.range(of: String($0), options: .caseInsensitive) != nil
+            .folding(options: .caseInsensitive, locale: nil).precomposedStringWithCanonicalMapping
+        let phrase = query.folding(options: .caseInsensitive, locale: nil).precomposedStringWithCanonicalMapping
+        if title == phrase { return 0 }
+        if title.hasPrefix(phrase) { return 1 }
+        if title.range(of: phrase, options: .literal) != nil { return 2 }
+        return phrase.split(whereSeparator: \.isWhitespace).allSatisfy {
+            title.range(of: String($0), options: .literal) != nil
         } ? 3 : 4
     }
 

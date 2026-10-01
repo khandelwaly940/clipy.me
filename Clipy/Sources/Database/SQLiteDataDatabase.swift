@@ -98,6 +98,9 @@ enum ClipyMeTextReader {
             throw NSError(domain: "ClipyMeTextRead", code: Int(opened))
         }
         defer { sqlite3_blob_close(blob) }
+        let foldedTerm = term.utf8.allSatisfy({ $0 < 128 }) ? term.lowercased()
+            : term.folding(options: .caseInsensitive, locale: nil).precomposedStringWithCanonicalMapping
+        let needle = Data(foldedTerm.utf8)
         let size = Int(sqlite3_blob_bytes(blob))
         let overlap = max(32, term.utf8.count * 4)
         let chunkSize = max(65_536, overlap * 2)
@@ -113,9 +116,17 @@ enum ClipyMeTextReader {
             var combined = carry
             combined.append(chunk)
             let text = String(decoding: combined, as: UTF8.self)
-            if let range = text.range(of: term, options: .caseInsensitive) {
+            let matches: Bool
+            if combined.withUnsafeBytes({ (bytes: UnsafeRawBufferPointer) in bytes.allSatisfy { $0 < 128 } }) {
+                matches = containsASCII(combined, needle: needle)
+            } else {
+                let folded = text.folding(options: .caseInsensitive, locale: nil).precomposedStringWithCanonicalMapping
+                matches = folded.range(of: foldedTerm, options: .literal) != nil
+            }
+            if matches {
+                let range = previewLength > 0 ? text.range(of: term, options: .caseInsensitive) : nil
                 guard previewLength > 0 else { return "" }
-                let start = text.index(range.lowerBound, offsetBy: -min(80, previewLength / 4), limitedBy: text.startIndex) ?? text.startIndex
+                let start = text.index(range?.lowerBound ?? text.startIndex, offsetBy: -min(80, previewLength / 4), limitedBy: text.startIndex) ?? text.startIndex
                 let snippet = String(text[start...].prefix(previewLength))
                 let before = offset > carry.count || start != text.startIndex
                 let after = offset + length < size || text.distance(from: start, to: text.endIndex) > previewLength
@@ -126,4 +137,26 @@ enum ClipyMeTextReader {
         }
         return nil
     }
+
+    private static func containsASCII(_ data: Data, needle: Data) -> Bool {
+        guard !needle.isEmpty, data.count >= needle.count else { return false }
+        return data.withUnsafeBytes { raw in
+            needle.withUnsafeBytes { targetRaw in
+                let bytes = raw.bindMemory(to: UInt8.self)
+                let target = targetRaw.bindMemory(to: UInt8.self)
+                for start in 0...(bytes.count - target.count) {
+                    var index = 0
+                    while index < target.count {
+                        let byte = bytes[start + index]
+                        let folded = byte >= 65 && byte <= 90 ? byte + 32 : byte
+                        if folded != target[index] { break }
+                        index += 1
+                    }
+                    if index == target.count { return true }
+                }
+                return false
+            }
+        }
+    }
+
 }
