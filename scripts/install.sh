@@ -7,12 +7,16 @@ repo='khandelwaly940/clipy.me'
 archive=''
 checksum_file=''
 verify_only=0
+source_kind=auto
+source_db=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --archive) archive="$2"; shift 2 ;;
     --checksum) checksum_file="$2"; shift 2 ;;
+    --source) source_kind="${2:?Source required}"; shift 2 ;;
+    --source-db) source_db="${2:?Database path required}"; shift 2 ;;
     --verify-only) verify_only=1; shift ;;
-    --help) echo 'Usage: install.sh [--archive ZIP --checksum SHA256_FILE] [--verify-only]'; exit 0 ;;
+    --help) echo 'Usage: install.sh [--archive ZIP --checksum SHA256_FILE] [--verify-only] [--source auto|clipy|copyclip|copyclip2|fresh] [--source-db PATH]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -30,6 +34,10 @@ success=0
 original_running=0
 custom_running=0
 original_id='com.clipy-app.Clipy'
+source_running=0
+source_process=''
+source_app=''
+copyclip_import=0
 custom_id='local.clipyme.app'
 support="$HOME/Library/Application Support/$custom_id"
 app_dir='/Applications'
@@ -64,6 +72,7 @@ cleanup() {
       /bin/mv "$support" "$backup/failed-migration-data" 2>/dev/null || true
       /usr/bin/defaults delete "$custom_id" >/dev/null 2>&1 || true
     fi
+    if [ "$source_running" -eq 1 ] && [ -d "$source_app" ]; then /usr/bin/open "$source_app" || true; fi
     if [ "$original_running" -eq 1 ]; then /usr/bin/open "$original" || true; fi
     if [ "$custom_running" -eq 1 ] && [ -d "$app" ]; then /usr/bin/open "$app" || true; fi
     if [ -n "$backup" ]; then echo "Backup retained at: $backup" >&2; fi
@@ -138,12 +147,66 @@ if [ -d "$app" ]; then
     fail "Installed version $installed_version is newer than release $release_version. Downgrade refused."
   fi
 fi
+case "$source_kind" in auto|clipy|copyclip|copyclip2|fresh) ;; *) fail 'Invalid --source value.' ;; esac
+if [ -n "$source_db" ]; then
+  case "$source_kind" in copyclip|copyclip2) ;; *) fail '--source-db requires --source copyclip or copyclip2.' ;; esac
+fi
 source_id="$original_id"
 source_app="$original"
-if [ -d "$support" ]; then source_id="$custom_id"; source_app="$app"; fi
-source_support="$HOME/Library/Application Support/$source_id"
-if [ "$source_id" = "$original_id" ] && /usr/bin/defaults read "$custom_id" >/dev/null 2>&1; then
-  fail 'ClipyMe preferences already exist without its data folder. Resolve the incomplete installation before migrating.'
+if [ -d "$support" ]; then
+  [ "$source_kind" = auto ] || fail 'ClipyMe already has data. Run without --source to update; importing over existing history is refused.'
+  source_id="$custom_id"; source_app="$app"
+else
+  if /usr/bin/defaults read "$custom_id" >/dev/null 2>&1; then
+    fail 'ClipyMe preferences already exist without its data folder. Resolve the incomplete installation before migrating.'
+  fi
+  if [ "$source_kind" = auto ]; then
+    sources=()
+    if [ -d "$HOME/Library/Application Support/$original_id" ]; then sources+=(clipy); fi
+    for pair in 'copyclip:com.fiplab.clipboard' 'copyclip2:com.fiplab.copyclip2'; do
+      kind="${pair%%:*}"; bundle="${pair#*:}"
+      if [ -d "$HOME/Library/Containers/$bundle" ] || [ -d "$HOME/Library/Application Support/$bundle" ] ||
+         { [ "$kind" = copyclip2 ] && [ -d "$HOME/Library/Application Support/CopyClip 2" ]; } ||
+         { [ "$kind" = copyclip ] && [ -d "$HOME/Library/Application Support/CopyClip" ]; }; then
+        sources+=("$kind")
+      fi
+    done
+    case "${#sources[@]}" in
+      0) source_kind=fresh ;;
+      1) source_kind="${sources[0]}" ;;
+      *) fail 'Multiple clipboard histories found. Choose --source clipy, copyclip, or copyclip2. Nothing was replaced.' ;;
+    esac
+  fi
+  case "$source_kind" in
+    copyclip|copyclip2)
+      copyclip_import=1
+      [ "$(/usr/libexec/PlistBuddy -c 'Print ClipyMeCopyClipImportVersion' "$candidate/Contents/Info.plist" 2>/dev/null || true)" = 1 ] || fail 'This release does not support CopyClip import. Retry after ClipyMe 1.3.3 or newer is available.'
+      if [ "$source_kind" = copyclip ]; then source_id='com.fiplab.clipboard'; source_process=CopyClip
+      else source_id='com.fiplab.copyclip2'; source_process='CopyClip 2'; fi
+      source_app="/Applications/$source_process.app"
+      [ ! -d "$HOME/Applications/$source_process.app" ] || source_app="$HOME/Applications/$source_process.app"
+      if [ -z "$source_db" ]; then
+        candidates=()
+        for root in "$HOME/Library/Containers/$source_id/Data/Library/Application Support" \
+                    "$HOME/Library/Application Support/$source_id" "$HOME/Library/Application Support/$source_process"; do
+          if [ -d "$root" ]; then
+            while IFS= read -r database; do [ -z "$database" ] || candidates+=("$database"); done < <("$verify" locate-copyclip "$root")
+          fi
+        done
+        [ "${#candidates[@]}" -eq 1 ] || fail 'Could not identify one readable CopyClip database. Use --source-db PATH; macOS may require access to its app container.'
+        source_db="${candidates[0]}"
+      fi
+      [ -f "$source_db" ] && [ ! -L "$source_db" ] || fail 'CopyClip database must be a regular file, not a symbolic link.'
+      source_support="$(cd "$(/usr/bin/dirname "$source_db")" && /bin/pwd -P)"
+      ;;
+    fresh) source_id='local.clipyme.fresh'; source_app=''; source_support="$work/empty-source" ;;
+    clipy)
+      [ -d "$HOME/Library/Application Support/$original_id" ] || fail 'No Clipy data found.'
+      ;;
+  esac
+fi
+if [ "$copyclip_import" -eq 0 ] && [ "$source_kind" != fresh ]; then
+  source_support="$HOME/Library/Application Support/$source_id"
 fi
 if [ "$source_id" = "$original_id" ] && [ -d "$original" ]; then
   version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$original/Contents/Info.plist")
@@ -163,6 +226,10 @@ quit_app() {
   fi
   wait "$pid" || true
 }
+if [ "$copyclip_import" -eq 1 ]; then
+  if /usr/bin/pgrep -x "$source_process" >/dev/null; then source_running=1; fi
+  quit_app "$source_id" "$source_process"
+fi
 quit_app "$original_id" Clipy
 quit_app "$custom_id" ClipyMe
 backup_root="$HOME/Library/Application Support/ClipyMe Backups"
@@ -177,24 +244,41 @@ for name in Caches 'Saved Application State'; do
 done
 if [ -d "$HOME/Library/Application Support/Clipy" ]; then "$verify" copy-tree "$HOME/Library/Application Support/Clipy" "$backup/Legacy Support"; fi
 if [ -d "$source_app" ]; then /usr/bin/ditto "$source_app" "$backup/Previous.app"; fi
-if ! /usr/bin/defaults export "$source_id" "$backup/preferences.plist" >/dev/null 2>&1; then
+container_prefs="$HOME/Library/Containers/$source_id/Data/Library/Preferences/$source_id.plist"
+if [ "$copyclip_import" -eq 1 ] && [ -f "$container_prefs" ]; then
+  /bin/cp "$container_prefs" "$backup/preferences.plist"
+elif ! /usr/bin/defaults export "$source_id" "$backup/preferences.plist" >/dev/null 2>&1; then
   /usr/bin/plutil -create xml1 "$backup/preferences.plist"
 fi
-if [ -f "$backup/Application Support/sqlite.db" ]; then
+if [ "$copyclip_import" -eq 0 ] && [ -f "$backup/Application Support/sqlite.db" ]; then
   "$verify" compare-db "$source_support/sqlite.db" "$backup/Application Support/sqlite.db"
+fi
+if [ "$copyclip_import" -eq 1 ]; then
+  "$verify" compare-copyclip-db "$source_db" "$backup/Application Support/$(/usr/bin/basename "$source_db")"
 fi
 "$verify" manifest "$backup"
 "$verify" verify-manifest "$backup"
 if [ ! -d "$support" ]; then
   stage="$work/staged-support"
-  if [ -d "$backup/Application Support" ]; then "$verify" copy-tree "$backup/Application Support" "$stage"; else /bin/mkdir "$stage"; fi
-  if [ -f "$stage/sqlite.db" ]; then "$verify" compare-db "$backup/Application Support/sqlite.db" "$stage/sqlite.db"; fi
+  install_prefs="$backup/preferences.plist"
+  if [ "$copyclip_import" -eq 1 ]; then
+    "$candidate/Contents/MacOS/ClipyMe" --clipyme-import-copyclip \
+      "$backup/Application Support/$(/usr/bin/basename "$source_db")" "$stage" "$backup/preferences.plist"
+    install_prefs="$stage/imported-preferences.plist"
+    /bin/cp "$install_prefs" "$work/imported-preferences.plist"
+    install_prefs="$work/imported-preferences.plist"
+    /bin/rm "$stage/imported-preferences.plist"
+    "$verify" compare-db "$stage/sqlite.db" "$stage/sqlite.db"
+  elif [ -d "$backup/Application Support" ]; then
+    "$verify" copy-tree "$backup/Application Support" "$stage"
+  else /bin/mkdir "$stage"; fi
+  if [ "$copyclip_import" -eq 0 ] && [ -f "$stage/sqlite.db" ]; then "$verify" compare-db "$backup/Application Support/sqlite.db" "$stage/sqlite.db"; fi
   /bin/mkdir -p "$(/usr/bin/dirname "$support")"
   /bin/mv "$stage" "$support"
   new_data=1
-  /usr/bin/defaults import "$custom_id" "$backup/preferences.plist"
+  /usr/bin/defaults import "$custom_id" "$install_prefs"
   /usr/bin/defaults export "$custom_id" "$work/preferences.plist"
-  "$verify" compare-plists "$backup/preferences.plist" "$work/preferences.plist"
+  "$verify" compare-plists "$install_prefs" "$work/preferences.plist"
 fi
 /bin/mkdir -p "$app_dir"
 # Stage on the destination volume before swapping bundles.
@@ -213,9 +297,15 @@ for count in $(/usr/bin/jot 90); do
 done
 [ "$healthy" -eq 1 ] || fail 'App launch/migration did not complete. Restoring the previous installation.'
 enabled=$(/usr/bin/defaults read "$custom_id" loginItem 2>/dev/null || echo 0)
-"$login" --switch "$original" "$app" "$enabled"
+login_source="${source_app:-$original}"
+[ "$source_id" != "$custom_id" ] || login_source="$original"
+"$login" --switch "$login_source" "$app" "$enabled"
 success=1
 if [ -n "$old_app" ] && [ -d "$old_app" ]; then /bin/rm -rf "$old_app"; fi
 printf '\nInstalled ClipyMe %s\nBackup: %s\n' "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" "$backup"
 echo 'On first installation, enable this ClipyMe app in System Settings → Privacy & Security → Accessibility to paste automatically.'
-echo 'Run the same installer to update. Original Clipy and its data remain available; never run both clipboard monitors at once.'
+if [ "$copyclip_import" -eq 1 ]; then
+  echo 'CopyClip data remains untouched. Its shortcuts, themes and unsupported settings are retained in the backup, not applied to ClipyMe.'
+  echo 'If CopyClip uses a separate login helper, turn off Start at Login in CopyClip before restarting your Mac.'
+fi
+echo 'Run the same installer to update. Original apps and their data remain available; run only one clipboard monitor at a time.'

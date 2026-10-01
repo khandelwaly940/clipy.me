@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		CE1000000000000000000003 /* ClipyMeReleaseUpdates.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0000000000000000000003; };
+		CE1000000000000000000004 /* ClipyMeCopyClipImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0000000000000000000004; };
 		CE1000000000000000000002 /* ClipyMeMenuSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0000000000000000000002; };
 		C50767032FDA7B52004EF448 /* SQLiteDataDatabase+TriggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C50767022FDA7B52004EF448 /* SQLiteDataDatabase+TriggerTests.swift */; };
 		C522FB952FCBD6AA00E61800 /* PasteboardAvailableType.swift in Sources */ = {isa = PBXBuildFile; fileRef = C522FB942FCBD69A00E61800 /* PasteboardAvailableType.swift */; };
@@ -124,6 +125,7 @@
 
 /* Begin PBXFileReference section */
 		CE0000000000000000000003 /* ClipyMeReleaseUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Clipy/Sources/ClipyMe/ClipyMeReleaseUpdates.swift; sourceTree = SOURCE_ROOT; };
+		CE0000000000000000000004 /* ClipyMeCopyClipImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Clipy/Sources/ClipyMe/ClipyMeCopyClipImporter.swift; sourceTree = SOURCE_ROOT; };
 		CE0000000000000000000002 /* ClipyMeMenuSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Clipy/Sources/ClipyMe/ClipyMeMenuSearchView.swift; sourceTree = SOURCE_ROOT; };
 		314B299D1EC49AD5004DD070 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/CPYSnippetsEditorWindowController.xib; sourceTree = "<group>"; };
 		314B299E1EC49AEF004DD070 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/CPYSnippetsEditorWindowController.strings; sourceTree = "<group>"; };
@@ -507,6 +509,7 @@
 			children = (
 				FA1DB4C31DDCB460007F95C8 /* MenuManager.swift */,
 				CE0000000000000000000003 /* ClipyMeReleaseUpdates.swift */,
+				CE0000000000000000000004 /* ClipyMeCopyClipImporter.swift */,
 				CE0000000000000000000002 /* ClipyMeMenuSearchView.swift */,
 				CE0000000000000000000001 /* ClipyMeHistoryController.swift */,
 				CE0000000000000000000000 /* ClipyMeHistoryStore.swift */,
@@ -885,6 +888,7 @@
 				FA0D5CE81DDCC61600AC9052 /* ClipService.swift in Sources */,
 				FA1DB4C91DDCB460007F95C8 /* MenuManager.swift in Sources */,
 				CE1000000000000000000003 /* ClipyMeReleaseUpdates.swift in Sources */,
+				CE1000000000000000000004 /* ClipyMeCopyClipImporter.swift in Sources */,
 				CE1000000000000000000002 /* ClipyMeMenuSearchView.swift in Sources */,
 				CE1000000000000000000001 /* ClipyMeHistoryController.swift in Sources */,
 				CE1000000000000000000000 /* ClipyMeHistoryStore.swift in Sources */,

@@ -52,7 +52,7 @@ final class ClipyMeHistoryController: NSWindowController, NSTableViewDataSource,
     func showHistory() {
         let frontmost = NSWorkspace.shared.frontmostApplication
         if frontmost?.processIdentifier != ProcessInfo.processInfo.processIdentifier { previousApp = frontmost }
-        sortButton.selectItem(at: ClipyMeHistoryStore.Sort.allCases.firstIndex(of: ClipyMeHistoryStore.selectedSort) ?? 0)
+        sortButton.selectItem(at: ClipyMeHistoryStore.Sort.allCases.firstIndex(of: ClipyMeHistoryStore.searchSort) ?? 0)
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         window?.makeFirstResponder(searchField)
@@ -166,7 +166,7 @@ final class ClipyMeHistoryController: NSWindowController, NSTableViewDataSource,
     }
 
     @objc private func optionsChanged() {
-        ClipyMeHistoryStore.selectedSort = ClipyMeHistoryStore.Sort.allCases[sortButton.indexOfSelectedItem]
+        ClipyMeHistoryStore.searchSort = ClipyMeHistoryStore.Sort.allCases[sortButton.indexOfSelectedItem]
         refresh()
     }
 

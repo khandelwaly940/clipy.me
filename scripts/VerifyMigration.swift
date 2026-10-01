@@ -96,9 +96,35 @@ do {
     try require(args.count >= 2, "Usage: ClipyMeVerify copy-tree|compare-db|compare-plists|manifest|verify-manifest PATH [PATH]")
     let source = URL(fileURLWithPath: args[1])
     switch args[0] {
+    case "locate-copyclip":
+        // Search only the caller's known CopyClip support directory, never the
+        // entire home directory. Print paths, never clipboard contents.
+        let enumerator = files.enumerator(at: source, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        while let url = enumerator?.nextObject() as? URL {
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            if values.isSymbolicLink == true { enumerator?.skipDescendants(); continue }
+            guard ["sqlite", "db"].contains(url.pathExtension.lowercased()) else { continue }
+            if let connection = try? database(url.path) {
+                let tables = (try? strings(connection, "SELECT name FROM sqlite_master WHERE type='table'")) ?? []
+                sqlite3_close(connection)
+                if tables.contains("ZCLIPPING") && tables.contains("Z_METADATA") { print(url.path) }
+            }
+        }
     case "copy-tree":
         try require(args.count == 3, "Destination required")
         try copyTree(source, URL(fileURLWithPath: args[2]))
+    case "compare-copyclip-db":
+        try require(args.count == 3, "Destination required")
+        let first = try database(args[1]); defer { sqlite3_close(first) }
+        let second = try database(args[2]); defer { sqlite3_close(second) }
+        try require(try strings(first, "PRAGMA integrity_check") == ["ok"], "CopyClip database is damaged")
+        try require(try strings(second, "PRAGMA integrity_check") == ["ok"], "CopyClip backup is damaged")
+        let tables = Set(try strings(first, "SELECT name FROM sqlite_master WHERE type='table'"))
+        try require(tables.contains("ZCLIPPING") && tables.contains("Z_METADATA"), "Unrecognized CopyClip database")
+        for table in ["ZCLIPPING", "ZSOURCEAPP", "Z_METADATA", "Z_PRIMARYKEY"] where tables.contains(table) {
+            try require(try digestTable(first, table) == digestTable(second, table), "CopyClip backup differs; migration stopped")
+        }
+        print("Verified CopyClip backup rows and asset bytes")
     case "compare-db":
         try require(args.count == 3, "Destination required")
         let first = try database(args[1]); defer { sqlite3_close(first) }

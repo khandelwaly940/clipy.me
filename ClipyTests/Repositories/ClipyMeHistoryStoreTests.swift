@@ -147,6 +147,64 @@ struct ClipyMeHistoryStoreTests {
         #expect(menu.items.count == 3)
     }
 
+    @Test func searchSortIsVisibleOnlyForNonblankQueries() async throws {
+        let menu = NSMenu()
+        let search = ClipyMeMenuSearchView()
+        search.owningMenu = menu
+        let header = NSMenuItem(); header.view = search; menu.addItem(header)
+        let sort = NSMenuItem(title: "Sort Search Results", action: nil, keyEquivalent: "")
+        menu.addItem(sort); search.sortItem = sort
+        let history = NSMenuItem(title: "Original history", action: nil, keyEquivalent: "")
+        menu.addItem(history); search.historyItems = [history]
+        search.reset()
+        #expect(sort.isHidden)
+        for query in ["needle", "", "another", "  "] {
+            search.searchField.stringValue = query
+            search.refreshSearch()
+            #expect(sort.isHidden == query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(menu.items.count == 3)
+        #expect(menu.items.last === history)
+    }
+
+    @Test func searchSortDoesNotChangeNormalHistoryOrder() throws {
+        let old = try save("Zulu", at: 1)
+        let new = try save("Alpha", at: 2)
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: ClipyMeHistoryStore.sortKey)
+        defer {
+            if let previous { defaults.set(previous, forKey: ClipyMeHistoryStore.sortKey) }
+            else { defaults.removeObject(forKey: ClipyMeHistoryStore.sortKey) }
+        }
+        for sort in ClipyMeHistoryStore.Sort.allCases {
+            ClipyMeHistoryStore.searchSort = sort
+            #expect(repository.fetchHistoryDetails(ascending: false, includesThumbnailAsset: false, limit: 30)
+                .map(\.history.id) == [new, old])
+            #expect(repository.fetchHistoryDetails(ascending: true, includesThumbnailAsset: false, limit: 30)
+                .map(\.history.id) == [old, new])
+        }
+    }
+
+    @Test func menuFieldEditorShowsInsertionPointInNonKeyWindow() throws {
+        let field = ClipyMeMenuSearchView().searchField
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 40),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView?.addSubview(field)
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor() as? ClipyMeMenuFieldEditor)
+        #expect(!window.isKeyWindow)
+        #expect(editor.isFieldEditor)
+        #expect(editor.shouldDrawInsertionPoint)
+        editor.string = "Search query"
+        editor.setSelectedRange(NSRange(location: 0, length: 6))
+        #expect(!editor.shouldDrawInsertionPoint)
+        editor.setSelectedRange(NSRange(location: 6, length: 0))
+        #expect(editor.shouldDrawInsertionPoint)
+        window.makeFirstResponder(nil)
+        #expect(!editor.shouldDrawInsertionPoint)
+    }
+
     @Test func updatesRespectDisableIntervalAndVersionOrdering() {
         let name = "ClipyMeUpdatesTest." + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
@@ -316,4 +374,81 @@ struct ClipyMeHistoryStoreTests {
         #expect(repository.fetchContent(id: id) == content)
         #expect(repository.fetchContent(id: copy)?.isOnlyStringType == true)
     }
+}
+
+@MainActor
+@Suite(.serialized)
+struct ClipyMeCopyClipImporterTests {
+    @Test func copyClipImportPreservesTextDatesPinsAndSettings() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("copyclip.sqlite")
+        let destination = root.appendingPathComponent("imported")
+        let preferences = root.appendingPathComponent("preferences.plist")
+        let prefs: [String: Any] = ["startAtLogin": false, "pasteDirectly": true, "saveClippingsCount": 1]
+        try PropertyListSerialization.data(fromPropertyList: prefs, format: .binary, options: 0).write(to: preferences)
+        let input = try DatabaseQueue(path: source.path)
+        try input.write { database in
+            try database.execute(sql: """
+                CREATE TABLE Z_METADATA(Z_VERSION INTEGER);
+                CREATE TABLE ZCLIPPING(Z_PK INTEGER PRIMARY KEY,ZCONTENTS TEXT,ZDATERECORDED REAL,ZTYPE TEXT,ZPINNED INTEGER,ZDISPLAYTITLE TEXT,ZATTRIBUTEDCONTENTS BLOB);
+                CREATE TABLE ZSOURCEAPP(ZBUNDLE TEXT,ZNAME TEXT,ZISBLACKLISTED INTEGER);
+                INSERT INTO ZCLIPPING VALUES(1,'Café needle',100,'NSStringPboardType',1,NULL,NULL);
+                INSERT INTO ZCLIPPING VALUES(2,'Café needle',200,'NSStringPboardType',0,NULL,NULL);
+                INSERT INTO ZCLIPPING VALUES(3,'Other clip',300,'NSStringPboardType',0,'Custom title',NULL);
+                INSERT INTO ZSOURCEAPP VALUES('example.passwords','Password app',1);
+                """)
+            let attributed = NSAttributedString(string: "Formatted text", attributes: [.font: NSFont.boldSystemFont(ofSize: 14)])
+            let archive = try NSKeyedArchiver.archivedData(withRootObject: attributed, requiringSecureCoding: true)
+            try database.execute(sql: "INSERT INTO ZCLIPPING VALUES(4,'Formatted text',400,'NSStringPboardType',0,NULL,?)", arguments: [archive])
+        }
+        try input.close()
+        try ClipyMeCopyClipImporter.run(source: source, destination: destination, preferences: preferences)
+        let output = try DatabaseQueue(path: destination.appendingPathComponent("sqlite.db").path)
+        try output.read { database in
+            #expect(try Int.fetchOne(database, sql: "SELECT count(*) FROM pasteboardHistories") == 3)
+            #expect(try Int.fetchOne(database, sql: "SELECT count(*) FROM clipyMeFavorites") == 1)
+            #expect(try Int.fetchOne(database, sql: "SELECT updateAt FROM pasteboardHistories WHERE title='Café needle'") == 978_307_400)
+            #expect(try String.fetchOne(database, sql: "SELECT title FROM pasteboardHistories WHERE updateAt=978307500") == "Custom title")
+            let rtf = try #require(try Data.fetchOne(database, sql: "SELECT data FROM pasteboardHistoryAssets WHERE pasteboardType='public.rtf'"))
+            #expect(try NSAttributedString(data: rtf, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil).string == "Formatted text")
+        }
+        let mapped = try #require(try PropertyListSerialization.propertyList(from: Data(contentsOf: destination.appendingPathComponent("imported-preferences.plist")), format: nil) as? [String: Any])
+        #expect(mapped[Constants.UserDefaults.loginItem] as? Bool == false)
+        #expect(mapped[Constants.UserDefaults.inputPasteCommand] as? Bool == true)
+        #expect((mapped[Constants.UserDefaults.maxHistorySize] as? Int ?? 0) >= 4)
+        #expect(mapped[Constants.UserDefaults.excludeApplications] is Data)
+        // A repeat import cannot overwrite a populated destination.
+        #expect(throws: (any Error).self) {
+            try ClipyMeCopyClipImporter.run(source: source, destination: destination, preferences: preferences)
+        }
+    }
+
+    @Test func copyClipImportRejectsUnreadableRowsWithoutLeavingPartialData() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("copyclip.sqlite")
+        let destination = root.appendingPathComponent("imported")
+        let preferences = root.appendingPathComponent("preferences.plist")
+        try PropertyListSerialization.data(fromPropertyList: [:], format: .xml, options: 0).write(to: preferences)
+        let input = try DatabaseQueue(path: source.path)
+        try input.write { database in
+            try database.execute(sql: """
+                CREATE TABLE Z_METADATA(Z_VERSION INTEGER);
+                CREATE TABLE ZCLIPPING(Z_PK INTEGER PRIMARY KEY,ZCONTENTS TEXT,ZDATERECORDED REAL,ZTYPE TEXT);
+                INSERT INTO ZCLIPPING VALUES(1,'Valid clip',100,'NSStringPboardType');
+                INSERT INTO ZCLIPPING VALUES(2,NULL,200,'NSStringPboardType');
+                """)
+        }
+        try input.close()
+        #expect(throws: (any Error).self) {
+            try ClipyMeCopyClipImporter.run(source: source, destination: destination, preferences: preferences)
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+        let untouched = try DatabaseQueue(path: source.path)
+        #expect(try untouched.read { try Int.fetchOne($0, sql: "SELECT count(*) FROM ZCLIPPING") } == 2)
+    }
+
 }

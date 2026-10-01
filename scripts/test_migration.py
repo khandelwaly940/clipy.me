@@ -37,6 +37,23 @@ class MigrationTests(unittest.TestCase):
             ''')
             connection.execute('INSERT INTO pasteboardHistoryAssets VALUES(?,?)',('asset',bytes(range(256))*4096))
         return path
+    def test_copyclip_locator_finds_only_known_history_databases(self):
+        source = self.root/'CopyClip'
+        source.mkdir()
+        known = source/'copyclip.sqlite'
+        with sqlite3.connect(known) as db:
+            db.executescript('CREATE TABLE Z_METADATA(Z_VERSION INTEGER); CREATE TABLE ZCLIPPING(Z_PK INTEGER);')
+        with sqlite3.connect(source/'unrelated.db') as db:
+            db.execute('CREATE TABLE other(value TEXT)')
+        result = subprocess.run([HELPER, 'locate-copyclip', str(source)], capture_output=True, text=True, check=True)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), known.resolve())
+        backup = self.root/'backup.sqlite'
+        shutil.copy2(known, backup)
+        self.run_helper('compare-copyclip-db', known, backup)
+        with sqlite3.connect(backup) as db:
+            db.execute('INSERT INTO ZCLIPPING VALUES(1)')
+        self.run_helper('compare-copyclip-db', known, backup, success=False)
+
     def test_database_copy_compares_every_blob_byte(self):
         before=self.make_database('before.db'); after=self.root/'after.db';shutil.copy2(before,after)
         self.run_helper('compare-db',before,after)

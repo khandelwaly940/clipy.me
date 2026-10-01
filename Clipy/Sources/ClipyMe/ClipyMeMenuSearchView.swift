@@ -2,7 +2,17 @@ import AppKit
 
 /// Search is a header in the original NSMenu; every result is a native menu item.
 final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
-    let searchField = NSSearchField()
+    let searchField: NSSearchField = {
+        let field = NSSearchField()
+        field.cell = ClipyMeMenuSearchCell(textCell: "")
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBezeled = true
+        field.focusRingType = .exterior
+        field.cell?.isScrollable = true
+        return field
+    }()
+    weak var sortItem: NSMenuItem?
     weak var owningMenu: NSMenu?
     var historyItems = [NSMenuItem]()
     var onQuery: ((String) -> Void)?
@@ -51,6 +61,7 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
         stop()
         searchField.stringValue = ""
         restoreHistory()
+        updateSortVisibility()
         onQuery?("")
     }
 
@@ -104,7 +115,19 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
         publish([item])
     }
 
+    private func updateSortVisibility() {
+        sortItem?.isHidden = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        for item in sortItem?.submenu?.items ?? [] {
+            item.state = (item.representedObject as? String) == ClipyMeHistoryStore.searchSort.rawValue ? .on : .off
+        }
+    }
+
+    func refreshSearch() {
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    }
+
     func controlTextDidChange(_ obj: Notification) {
+        updateSortVisibility()
         stop()
         let query = searchField.stringValue
         onQuery?(query)
@@ -120,7 +143,7 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
             item.isEnabled = false
         }
         let request = generation
-        let sort = ClipyMeHistoryStore.selectedSort
+        let sort = ClipyMeHistoryStore.searchSort
         let store = self.store
         let work = DispatchWorkItem { [weak self] in
             let matches = Result { try store.search(query: query, filter: .all, sort: sort, limit: 31) }
@@ -208,4 +231,25 @@ final class ClipyMeMenuSearchView: NSView, NSSearchFieldDelegate {
         }
         return false
     }
+}
+
+// A menu window does not become key. AppKit's shared editor accepts typing
+// there, but suppresses its caret. Supply a native field editor whose insertion
+// point follows focus, without activating the app or stealing the paste target.
+final class ClipyMeMenuFieldEditor: NSTextView {
+    override var shouldDrawInsertionPoint: Bool {
+        isEditable && selectedRange().length == 0 && window?.firstResponder === self
+    }
+}
+
+final class ClipyMeMenuSearchCell: NSSearchFieldCell {
+    private lazy var editor: NSTextView = {
+        let editor = ClipyMeMenuFieldEditor()
+        editor.isFieldEditor = true
+        editor.isRichText = false
+        editor.insertionPointColor = .labelColor
+        return editor
+    }()
+
+    override func fieldEditor(for controlView: NSView) -> NSTextView? { editor }
 }

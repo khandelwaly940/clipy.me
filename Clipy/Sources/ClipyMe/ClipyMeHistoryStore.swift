@@ -52,10 +52,16 @@ final class ClipyMeHistoryStore {
         }
     }
 
-    static let sortKey = "ClipyMe.historySort"
+    static let sortKey = "ClipyMe.searchSort"
     static let changed = Notification.Name("ClipyMe.historyOptionsChanged")
-    static var selectedSort: Sort {
-        get { Sort(rawValue: UserDefaults.standard.string(forKey: sortKey) ?? "") ?? .bestMatch }
+    static var searchSort: Sort {
+        get {
+            let defaults = UserDefaults.standard
+            // Carry forward the previous choice for search only. Normal history
+            // never reads either of these keys.
+            return Sort(rawValue: defaults.string(forKey: sortKey)
+                ?? defaults.string(forKey: "ClipyMe.historySort") ?? "") ?? .bestMatch
+        }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: sortKey)
             NotificationCenter.default.post(name: changed, object: nil)
@@ -238,25 +244,6 @@ final class ClipyMeHistoryStore {
         return Entry(id: .init(rawValue: row["id"]), title: row["title"],
                      types: (try? JSONDecoder().decode([String].self, from: Data(types.utf8))) ?? [],
                      updatedAt: row["updateAt"], favorite: row["favorite"])
-    }
-
-    func menuDetails(includesThumbnails: Bool, limit: Int) throws -> [PasteboardHistoryDetail] {
-        try database.read { connection in
-            let rawIDs = try String.fetchAll(connection, sql: "SELECT h.id FROM pasteboardHistories h ORDER BY \(Self.selectedSort.orderSQL) LIMIT ?", arguments: [max(0, limit)])
-            let ids = rawIDs.map { PasteboardHistory.ID(rawValue: $0) }
-            let histories = PasteboardHistory.where { $0.id.in(ids) }
-            let details: [PasteboardHistoryDetail]
-            if includesThumbnails {
-                details = try histories
-                    .leftJoin(PasteboardHistoryThumbnailAsset.all) { $0.id.eq($1.pasteboardHistoryID) }
-                    .select { PasteboardHistoryDetail.Columns(history: $0, thumbnailAsset: $1) }
-                    .fetchAll(connection)
-            } else {
-                details = try histories.fetchAll(connection).map { PasteboardHistoryDetail(history: $0, thumbnailAsset: nil) }
-            }
-            let byID = Dictionary(uniqueKeysWithValues: details.map { ($0.history.id, $0) })
-            return ids.compactMap { byID[$0] }
-        }
     }
 
     func favoriteIDs() throws -> Set<String> {

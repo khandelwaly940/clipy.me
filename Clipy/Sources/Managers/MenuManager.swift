@@ -280,24 +280,27 @@ private extension MenuManager {
         search.isHidden = true
         search.allowsKeyEquivalentWhenHidden = true
         menu.addItem(search)
-        let sort = NSMenuItem(title: "Sort History", action: nil, keyEquivalent: "")
+        let sort = NSMenuItem(title: "Sort Search Results", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         for option in ClipyMeHistoryStore.Sort.allCases {
-            let item = NSMenuItem(title: option.title, action: #selector(changeHistorySort(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: option.title, action: #selector(changeSearchSort(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = option.rawValue
-            item.state = option == ClipyMeHistoryStore.selectedSort ? .on : .off
+            item.state = option == ClipyMeHistoryStore.searchSort ? .on : .off
             submenu.addItem(item)
         }
         sort.submenu = submenu
+        sort.isHidden = true
+        (menu.items.first?.view as? ClipyMeMenuSearchView)?.sortItem = sort
         menu.addItem(sort)
         menu.addItem(.separator())
     }
 
-    @objc func changeHistorySort(_ sender: NSMenuItem) {
+    @objc func changeSearchSort(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String,
               let sort = ClipyMeHistoryStore.Sort(rawValue: value) else { return }
-        ClipyMeHistoryStore.selectedSort = sort
+        ClipyMeHistoryStore.searchSort = sort
+        (trackingMenu?.items.first?.view as? ClipyMeMenuSearchView)?.refreshSearch()
     }
 
     func menuItemTitle(_ title: String, listNumber: NSInteger, isMarkWithNumber: Bool) -> String {
@@ -371,14 +374,8 @@ private extension MenuManager {
         let ascending = !AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.reorderClipsAfterPasting)
         let isShowImage = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.showImageInTheMenu)
         let isShowColorCode = AppEnvironment.current.defaults.bool(forKey: Constants.UserDefaults.showColorPreviewInTheMenu)
-        let historyDetails: [PasteboardHistoryDetail]
-        if ClipyMeHistoryStore.selectedSort == .original {
-            historyDetails = pasteboardHistoryRepository.fetchHistoryDetails(
-                ascending: ascending, includesThumbnailAsset: isShowImage || isShowColorCode, limit: maxHistory)
-        } else {
-            historyDetails = (try? historyStore.menuDetails(
-                includesThumbnails: isShowImage || isShowColorCode, limit: maxHistory)) ?? []
-        }
+        let historyDetails = pasteboardHistoryRepository.fetchHistoryDetails(
+            ascending: ascending, includesThumbnailAsset: isShowImage || isShowColorCode, limit: maxHistory)
         let currentSize = historyDetails.count
         var i = 0
         historyDetails.forEach { historyDetail in

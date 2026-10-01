@@ -41,6 +41,18 @@ class AppDelegate: NSObject, NSMenuItemValidation {
     // MARK: - Init
     override func awakeFromNib() {
         super.awakeFromNib()
+        if let index = CommandLine.arguments.firstIndex(of: "--clipyme-import-copyclip") {
+            let arguments = Array(CommandLine.arguments.dropFirst(index + 1))
+            do {
+                try ClipyMeCopyClipImporter.require(arguments.count == 3, "Source database, staging directory and preferences required")
+                try ClipyMeCopyClipImporter.run(source: URL(fileURLWithPath: arguments[0]),
+                    destination: URL(fileURLWithPath: arguments[1]), preferences: URL(fileURLWithPath: arguments[2]))
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("ClipyMe import: \(error)\n".utf8))
+                exit(1)
+            }
+        }
         if CommandLine.arguments.contains("--clipyme-permission-check") { return }
         // If the SQLite database file does not exist yet, start the database and then migrate Realm data to SQLiteData.
         let sqliteDatabaseExists = (try? SQLiteDataDatabase.databaseURL().checkResourceIsReachable()) ?? false
